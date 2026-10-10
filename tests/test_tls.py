@@ -54,6 +54,16 @@ class TestTlsMath(unittest.TestCase):
                                       atol=1e-12)
         self.assertAlmostEqual(numpy.trace(S), 0.)
 
+    def test_origin_shift_is_exact(self):
+        # moving the origin transforms T, L, S such that U_tls at every position is unchanged
+        pts = numpy.random.default_rng(5).normal(size=(80, 3)) * 10
+        old, new = numpy.array([1., 2., 3.]), numpy.array([6., -2., 9.])
+        M = tls.origin_shift_matrix(old, new, pts)
+        p = numpy.random.default_rng(6).normal(size=tls.NPAR)
+        u_old = tls.tls_jacobian(pts - old) @ tls._P @ p
+        u_new = tls.tls_jacobian(pts - new) @ tls._P @ (M @ p)
+        numpy.testing.assert_allclose(u_new, u_old, atol=1e-10)
+
     def test_psd_projection(self):
         p = numpy.zeros(tls.NPAR)
         p[0:6] = [1., -0.5, 2., 0., 0., 0.] # T has a negative eigenvalue
@@ -100,6 +110,62 @@ class TestTlsRefine(unittest.TestCase):
         # B in the output is the isotropic equivalent of the total U
         for cra in st[0].all():
             self.assertAlmostEqual(cra.atom.b_iso, cra.atom.aniso.trace() / 3 * utils.model.u_to_b, places=1)
+
+    def test_sidecar_roundtrip(self):
+        # groups written to the yaml come back with the same residues, origin, T, L and S
+        import omegaconf
+        from servalcat.refine.refine import RefineConfig
+        st = utils.fileio.read_structure(os.path.join(root, "1l2h", "1l2h.cif.gz"))
+        for i, cra in enumerate(st[0].all()):
+            cra.atom.serial = i + 1
+        class Item:
+            def __init__(self, i, sels): self.id, self.selections = i, sels
+        groups = tls.groups_from_selections(st, [Item(1, ["//A/4-80/*"]), Item(2, ["//A/81-100/*", "//A/120-164/*"])])
+        rng = numpy.random.default_rng(1)
+        for g in groups:
+            g.p = rng.normal(size=tls.NPAR)
+        class Model: enforce_psd = True
+        Model.groups = groups
+        tls.write_tls_config("t.yaml", st, Model)
+        cfg = omegaconf.OmegaConf.merge(omegaconf.OmegaConf.create({"refine": RefineConfig()}), omegaconf.OmegaConf.load("t.yaml"))
+        self.assertEqual(cfg.refine.tls.input_b, "total")
+        groups2 = tls.groups_from_selections(st, cfg.refine.tls.groups)
+        for g, g2 in zip(groups, groups2):
+            self.assertTrue(g2.has_params)
+            numpy.testing.assert_array_equal(g.idx, g2.idx) # same atoms (the two ranges of group 2 are kept)
+            numpy.testing.assert_allclose(g2.p, g.p, rtol=1e-12)
+            numpy.testing.assert_allclose(g2.origin, g.origin, rtol=1e-12)
+
+    def test_restart_after_tls_records_are_lost(self):
+        # An editing program (Coot) may drop REMARK 3 / the TLS categories. The yaml written with the
+        # refined model (--tls_file) continues the TLS refinement from the previous solution.
+        import make_tls_data
+        make_tls_data.make(".")
+        with open("tls.yaml", "w") as f:
+            f.write("refine:\n  tls:\n    groups:\n"
+                    "      - id: 1\n        selections: ['//A/4-80/*']\n"
+                    "      - id: 2\n        selections: ['//A/81-164/*']\n")
+        common = ["", "refine_xtal", "--hklin", "data.mtz", "-s", "xray", "--labin", "FP,SIGFP,FreeR_flag",
+                  "--no_solvent", "--hydrogen", "no"]
+        sys.argv = common + ["--model", "start.pdb", "--config", "tls.yaml", "--ncycle", "8", "-o", "first"]
+        main()
+        self.assertTrue(os.path.isfile("first_tls.yaml"))
+        with open("first_stats.json") as f:
+            r_first = json.load(f)[-1]["data"]["summary"]["Rwork"]
+        st = utils.fileio.read_structure("first.pdb")
+        self.assertEqual(len(tls.groups_from_model(st)), 2) # the model itself has them
+        st.raw_remarks = []                                  # as if the editing program dropped them
+        st.meta.refinement = []
+        st.write_pdb("edited.pdb")
+        self.assertEqual(len(tls.groups_from_model(utils.fileio.read_structure("edited.pdb"))), 0)
+        r0 = {}
+        for name, extra in (("restart", ["--tls_file", "first_tls.yaml"]), ("naive", ["--config", "tls.yaml"])):
+            sys.argv = common + ["--model", "edited.pdb", "--ncycle", "1", "-o", name] + extra
+            main()
+            with open(f"{name}_stats.json") as f:
+                r0[name] = json.load(f)[0]["data"]["summary"]["Rwork"]
+        self.assertAlmostEqual(r0["restart"], r_first, delta=0.005)  # continues where it stopped
+        self.assertGreater(r0["naive"] - r0["restart"], 0.01)         # starting from T=L=S=0 does not
 
     def test_tls_errors(self):
         hklin = os.path.join(root, "biotin", "biotin_talos.mtz")

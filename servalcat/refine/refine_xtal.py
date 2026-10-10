@@ -100,6 +100,9 @@ def add_arguments(parser):
                         "in the config file, or from the input model")
     parser.add_argument('--tls_per_chain', action="store_true",
                         help="TLS refinement with one TLS group per chain (when no groups are defined)")
+    parser.add_argument('--tls_file',
+                        help="TLS definition (yaml; groups, optionally with starting T, L, S) such as prefix_tls.yaml "
+                        "written by a previous run or by 'util tls_select'. Use it to continue after editing the model")
     parser.add_argument('--tls_ncycle', type=int,
                         help="Number of TLS steps per refinement cycle (default: 1)")
     parser.add_argument('--refine_dfrac', action="store_true", help="Refine deuterium fraction (neutron only)")
@@ -346,6 +349,7 @@ def main(args):
     update_meta(st, stats[-1], ll)
     if tls is not None:
         tls_mod.update_meta_tls(st, tls)
+        tls_mod.write_tls_config(args.output_prefix + "_tls.yaml", st, tls)
     st.meta.software = software_items + st.meta.software
     refiner.st.name = args.output_prefix
     utils.fileio.write_model(refiner.st, args.output_prefix, pdb=True, cif=True, hout=args.hout)

@@ -14,7 +14,7 @@ import numpy
 import json
 import pandas
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import List, Dict, Optional
 import omegaconf
 import servalcat # for version
 from servalcat.utils import logger
@@ -72,6 +72,7 @@ tls:
       selections: [sel_1, sel_2]
   ncycle: 1
   enforce_psd: true
+  input_b: auto  # auto, total or residual
 vdw_exclusion:
   selections: []
   pair_selections: []
@@ -128,10 +129,17 @@ class VdwExclusion:
 class TlsGroupItem:
     id: int
     selections: List[str] = field(default_factory=list)
+    # optional starting values (as written by Servalcat in prefix_tls.yaml); T, L, S as in the PDB TLS records
+    origin: Optional[List[float]] = field(default=None, metadata={"help": "Origin (x, y, z) in A"})
+    T: Optional[List[float]] = field(default=None, metadata={"help": "T11 T22 T33 T12 T13 T23 in A^2"})
+    L: Optional[List[float]] = field(default=None, metadata={"help": "L11 L22 L33 L12 L13 L23 in deg^2"})
+    S: Optional[List[float]] = field(default=None, metadata={"help": "S11 S12 S13 S21 S22 S23 S31 S32 S33 in A*deg"})
 @dataclass
 class TlsConfig:
     groups: List[TlsGroupItem] = field(default_factory=list, metadata={"help": "TLS groups; each is a list of gemmi selections"})
     ncycle: int = field(default=1, metadata={"help": "Number of TLS refinement steps per macro cycle"})
+    input_b: str = field(default="auto", metadata={"help": "auto, total or residual: B-factors in the input model when starting values of T, L, S are given. "
+                                                       "auto: total, unless the model says residual only"})
     enforce_psd: bool = field(default=True, metadata={"help": "Keep T and L positive semi-definite. If false, only the total U of each atom is required to be positive definite"})
 @dataclass
 class RefineConfig:
@@ -175,6 +183,12 @@ def load_config(yaml_file, args, refmackwds):
         except omegaconf.errors.ValidationError as e:
             raise SystemExit(f"Error while parsing {yaml_file}.\n{e.msg}")
             
+    tls_file = getattr(args, "tls_file", None)
+    if tls_file: # TLS definition written by a previous run (prefix_tls.yaml); replaces refine.tls.groups
+        try:
+            cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load(tls_file))
+        except omegaconf.errors.ValidationError as e:
+            raise SystemExit(f"Error while parsing {tls_file}.\n{e.msg}")
     # load from args
     rcfg = cfg.refine
     if getattr(args, "write_trajectory", False):

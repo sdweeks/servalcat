@@ -123,6 +123,16 @@ def project_psd(p):
             p[sl] = sym6((V * w) @ V.T)
     return p
 
+def origin_shift_matrix(old_origin, new_origin, points):
+    """20x20 matrix M such that the TLS parameters p' = M p about new_origin give the same U field as p about
+    old_origin. The U field is a polynomial in the position (T: constant, S: linear, L: quadratic), so the
+    transformation is exact; it is determined by least squares from `points`, which must be generic enough
+    (at least a few non-degenerate points)."""
+    points = numpy.asarray(points, dtype=float).reshape(-1, 3)
+    j_old = (tls_jacobian(points - numpy.asarray(old_origin)) @ _P).reshape(-1, NPAR)
+    j_new = (tls_jacobian(points - numpy.asarray(new_origin)) @ _P).reshape(-1, NPAR)
+    return numpy.linalg.lstsq(j_new, j_old, rcond=None)[0]
+
 class TlsGroup:
     def __init__(self, gid, atoms, selections=None, origin=None, p=None):
         if len(atoms) == 0:
@@ -137,11 +147,29 @@ class TlsGroup:
             origin = (pos * w[:, None]).sum(axis=0) / w.sum()
         self.origin = numpy.asarray(origin, dtype=float)
         self.p = numpy.zeros(NPAR) if p is None else numpy.array(p, dtype=float)
+        self.has_params = p is not None # starting values of T, L, S were given
         self.pidx = None # indices in the parameter list of the gradient calculation
         self.spec = [] # list of (local index, 6x6 matrix) for atoms on special positions
 
     def positions(self):
         return numpy.array([[a.pos.x, a.pos.y, a.pos.z] for a in self.atoms])
+
+    def center_of_mass(self):
+        w = numpy.array([a.element.weight for a in self.atoms])
+        return (self.positions() * w[:, None]).sum(axis=0) / w.sum()
+
+    def recenter(self, new_origin=None):
+        """Move the origin (default: the current centre of mass of the atoms), e.g. after the group was moved by
+        rebuilding; T, L, S are transformed such that U_tls at every position is unchanged. Returns the shift (A)."""
+        new_origin = self.center_of_mass() if new_origin is None else numpy.asarray(new_origin, dtype=float)
+        shift = float(numpy.linalg.norm(new_origin - self.origin))
+        if shift > 1e-6:
+            pos = self.positions()
+            lo, hi = pos.min(axis=0) - 5., pos.max(axis=0) + 5.
+            pts = numpy.random.default_rng(0).uniform(lo, hi, size=(60, 3)) # generic points: the fit is exact
+            self.p = origin_shift_matrix(self.origin, new_origin, numpy.vstack([pos[:200], pts])) @ self.p
+            self.origin = new_origin
+        return shift
 
     def jacobian(self):
         return tls_jacobian(self.positions() - self.origin) @ _P # (N, 6, NPAR)
@@ -251,6 +279,13 @@ class TlsModel:
         self.residual_b_final = self.residual_b()
         for a in self.atoms:
             a.b_iso = a.aniso.trace() / 3. * u_to_b
+        self.finalized = True
+
+    def release(self):
+        """Remove the anisotropic U set by apply() (atoms keep their residual B in b_iso). The model must not be used
+        afterwards; it is for trial fits that must leave the structure as it was."""
+        for a in self.atoms:
+            a.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)
         self.finalized = True
 
     # ---- refinement of T, L and S
@@ -396,8 +431,24 @@ def groups_from_selections(st, items):
                 logger.writeln(f"WARNING: no atom found for the selection (TLS group {item.id}): {s}")
         if not atoms:
             raise SystemExit(f"Error: TLS group {item.id} is empty")
-        groups.append(TlsGroup(item.id, atoms, list(item.selections)))
+        origin, p = None, None
+        Tv, Lv, Sv = (_optional_floats(item, k, n) for k, n in (("T", 6), ("L", 6), ("S", 9)))
+        if Tv is not None and Lv is not None and Sv is not None:
+            p = p_from_matrices(sym33(Tv), sym33(Lv), numpy.array(Sv).reshape(3, 3))
+            origin = _optional_floats(item, "origin", 3)
+        elif any(x is not None for x in (Tv, Lv, Sv)):
+            raise SystemExit(f"Error: TLS group {item.id}: T, L and S must be given all together")
+        groups.append(TlsGroup(item.id, atoms, list(item.selections), origin=origin, p=p))
     return groups
+
+def _optional_floats(item, key, n):
+    v = item.get(key) if hasattr(item, "get") else getattr(item, key, None)
+    if v is None:
+        return None
+    v = [float(x) for x in v]
+    if len(v) != n:
+        raise SystemExit(f"Error: TLS group {item.id}: {key} must have {n} values")
+    return v
 
 def groups_per_chain(st):
     groups = []
@@ -528,11 +579,25 @@ def setup_tls(st, cfg_tls, per_chain=False, ncycle=None, specials=(), exclude_h_
                              "or use --tls_per_chain.")
     if ncycle is None:
         ncycle = cfg_tls.ncycle
+    for g in groups:
+        if g.has_params: # the group may have moved since T, L, S were determined (rebuilding)
+            shift = g.recenter()
+            if shift > 0.5:
+                logger.writeln(f"TLS group {g.id}: origin moved by {shift:.2f} A to the current centre of mass "
+                               "(T, L, S transformed; the TLS model is unchanged)")
     model = TlsModel(st, groups, ncycle=ncycle, specials=specials, exclude_h_ll=exclude_h_ll,
                      enforce_psd=cfg_tls.enforce_psd)
-    if from_model and model_path and not detect_residual_only(model_path):
-        logger.writeln("TLS: B-factors in the input model are taken as total; TLS contribution removed to get residual B")
-        initialise_residual_from_total(model)
+    if any(g.has_params for g in groups):
+        mode = cfg_tls.input_b
+        if mode not in ("auto", "total", "residual"):
+            raise SystemExit(f"Error: refine.tls.input_b must be auto, total or residual (got {mode})")
+        if mode == "auto":
+            mode = "residual" if model_path and detect_residual_only(model_path) else "total"
+        if mode == "total":
+            logger.writeln("TLS: B-factors in the input model are taken as total; TLS contribution removed to get residual B")
+            initialise_residual_from_total(model)
+        else:
+            logger.writeln("TLS: B-factors in the input model are taken as residual")
     model.show()
     return model
 
@@ -610,3 +675,30 @@ def update_meta_tls(st, model):
         st.meta.refinement = [gemmi.RefinementInfo()]
     st.meta.refinement[0].tls_groups = to_gemmi_groups(st, model)
     st.raw_remarks = list(st.raw_remarks) + remark3_lines(st, model)
+
+def tls_config_dict(st, model, with_parameters=True):
+    """TLS definition in the format of the refine.tls section of the config file"""
+    groups = []
+    for g in model.groups:
+        d = {"id": int(g.id),
+             "selections": [f"//{c}/{_seqid_str(b)}-{_seqid_str(e)}/*" for c, b, e in _runs(st, g)]}
+        if with_parameters:
+            T, L, S = g.tensors()
+            d["origin"] = [float(x) for x in g.origin]
+            d["T"] = [float(x) for x in sym6(T)]
+            d["L"] = [float(x) for x in sym6(L)]
+            d["S"] = [float(x) for x in S.reshape(-1)]
+        groups.append(d)
+    tls = {"groups": groups, "enforce_psd": bool(model.enforce_psd)}
+    if with_parameters:
+        tls["input_b"] = "total" # the model written together has the B-factors of the total U
+    return {"refine": {"tls": tls}}
+
+def write_tls_config(path, st, model, with_parameters=True):
+    """Write the TLS groups (residue ranges and, optionally, T, L, S) as yaml for --tls_file, so that refinement can
+    be continued after the model was edited (e.g. in Coot) even if the editing program drops the TLS records"""
+    import omegaconf
+    omegaconf.OmegaConf.save(omegaconf.OmegaConf.create(tls_config_dict(st, model, with_parameters)), path)
+    logger.writeln(f"TLS definition written: {path}")
+    if with_parameters:
+        logger.writeln(f" (to continue after editing the model: --tls_file {path})")
