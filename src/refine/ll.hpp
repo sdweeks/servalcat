@@ -674,7 +674,7 @@ struct LL{
         am[pos_b] += w * fac_b;
       else if (adp_mode == 2) {
         for (int j = 0; j < 3; ++j) am[pos_b + j] += w * fac_a;     // 11-11, 22-22, 33-33
-        for (int j = 3; j < 6; ++j) am[pos_b + j] += w * fac_a * 4; // 12-12, 13-13, 23-23
+        for (int j = 3; j < 6; ++j) am[pos_b + j] += w * fac_a * 4 / 3; // 12-12, 13-13, 23-23 (<4 h1^2 h2^2> = 4/3 <h1^4>; see taa)
         for (int j : {6, 7, 11})    am[pos_b + j] += w * fac_a / 3; // 11-22, 11-33, 22-33
       }
       if (pos_q >= 0) {

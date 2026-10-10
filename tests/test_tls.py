@@ -15,7 +15,7 @@ import tempfile
 import numpy
 import servalcat # must be imported before gemmi (registers the bundled gemmi)
 import gemmi
-from servalcat import utils
+from servalcat import utils, ext
 from servalcat.refine import tls
 from servalcat.__main__ import main
 
@@ -156,6 +156,57 @@ class TestTlsRefine(unittest.TestCase):
         self.assertEqual(len(result), 6)
         for k, (ana, fd) in result.items():
             self.assertAlmostEqual(ana / fd, 1., delta=0.05, msg=f"parameter {k}: analytic {ana} FD {fd}")
+
+    def test_aniso_fisher_shear_elements(self):
+        # Regression test for LL::fisher_diag_from_table: the diagonal of the Fisher matrix of the shear elements
+        # (B12, B13, B23) of the anisotropic B must be consistent with that of the diagonal elements (B11, B22, B33);
+        # it was 4 times instead of 4/3 times larger, so Fisher/curvature was ~3x larger for shear elements.
+        mtzin = os.path.join(root, "1l2h", "1l2h.mtz.gz")
+        cifin = os.path.join(root, "1l2h", "1l2h.cif.gz")
+        with open("tls.yaml", "w") as f:
+            f.write("refine:\n  tls:\n    groups:\n      - id: 1\n        selections: ['//A/4-164/*']\n")
+        result = {}
+        def check(self_, ll, ncycle=None):
+            if result:
+                return []
+            ll.update_fc()
+            atoms = [a for a in self_.atoms if not a.is_hydrogen()]
+            sel = atoms[::len(atoms) // 8][:8]
+            params = ext.RefineParams(use_aniso=True, use_q_b_mixed=False)
+            params.set_model(self_.st[0])
+            params.set_params_selected([a.serial - 1 for a in sel], refine_adp=True)
+            am = numpy.array(ll.calc_grad(params, store=False).am).reshape(len(sel), 21)
+            a2p = params.atom_to_param(ext.RefineParams.Type.B)
+            h = 3. # B
+            fish, curv = numpy.zeros((len(sel), 6)), numpy.zeros((len(sel), 6))
+            for i, a in enumerate(sel):
+                fish[i] = am[a2p[a.serial - 1], :6]
+                u0 = numpy.array(a.aniso.elements_pdb())
+                for k in (0, 1, 2, 3, 4, 5):
+                    fs = []
+                    for sgn in (1, -1, 0):
+                        u = u0.copy()
+                        u[k] += sgn * h * utils.model.b_to_u
+                        a.aniso = gemmi.SMat33f(*u)
+                        ll.update_fc()
+                        fs.append(ll.calc_target())
+                    a.aniso = gemmi.SMat33f(*u0)
+                    curv[i, k] = (fs[0] - 2 * fs[2] + fs[1]) / h**2
+            ll.update_fc()
+            result["diag"] = fish[:, :3].mean() / curv[:, :3].mean()
+            result["shear"] = fish[:, 3:].mean() / curv[:, 3:].mean()
+            return []
+        orig = tls.TlsModel.refine
+        tls.TlsModel.refine = check
+        try:
+            sys.argv = ["", "refine_xtal", "--model", cifin, "--hklin", mtzin, "-s", "xray", "--no_solvent",
+                        "--labin", "IMEAN,SIGIMEAN,FreeR_flag", "--config", "tls.yaml", "--ncycle", "1",
+                        "--hydrogen", "no"]
+            main()
+        finally:
+            tls.TlsModel.refine = orig
+        self.assertAlmostEqual(result["diag"], 1., delta=0.4)
+        self.assertLess(result["shear"] / result["diag"], 1.8, msg=str(result)) # ~3.2 with the factor 4, ~1.07 with 4/3
 
     def test_tls_synthetic(self):
         # noise-free amplitudes calculated from a model with two TLS groups; refinement starting without

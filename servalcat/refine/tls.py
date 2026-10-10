@@ -53,10 +53,6 @@ b_to_u = utils.model.b_to_u
 u_to_b = utils.model.u_to_b
 DEG = numpy.pi / 180.
 NPAR = 20 # T(6) + L(6) + S(8)
-# Fisher information of the shear elements (B12, B13, B23) of the anisotropic B. For a Gaussian atom
-# <h1^2 h2^2> = <h1^4> / 3, so the curvature of the element B12 is 4/3 (not 4) times that of B11.
-# The per-atom blocks from LL.calc_grad use 4; this factor rescales them for the TLS projection.
-SHEAR_FISHER_SCALE = 1. / 3.
 _UP = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)) # same order as gemmi elements_pdb()
 # 21 (T6, L6, S9) -> 20 free parameters (S33 = -S11 - S22)
 _P = numpy.zeros((21, NPAR))
@@ -273,8 +269,6 @@ class TlsModel:
             for l in range(k + 1, 6):
                 H[:, k, l] = H[:, l, k] = a[:, c]
                 c += 1
-        d = numpy.array([1., 1., 1.] + [SHEAR_FISHER_SCALE**0.5] * 3)
-        H = H * d[None, :, None] * d[None, None, :]
         return vn, H
 
     def _solve(self, g, H):
