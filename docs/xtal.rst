@@ -28,7 +28,7 @@ Frequently used options
    * ``--ncycle NCYCLE``: Number of refinement cycles. Default: 10
    * ``--weight WEIGHT``: Starting value of the weight for the experimental data term (default: automatically determined from resolution). By default, the weight is further adjusted to achieve bond length rmsZ in the range between 0.5 and 1.0. This can be changed using the option ``--target_bond_rmsz_range MIN_RMSZ MAX_RMSZ``.
    * ``--ncsr``: Use local restraints for non-crystallographic symmetry
-   * ``--tls``, ``--tls_per_chain``, ``--tls_ncycle N``: TLS refinement (see below)
+   * ``--tls``, ``--tls_per_chain``, ``--tls_file FILE``, ``--tls_ncycle N``: TLS refinement (see below)
    * ``--jellybody``: Use jelly body restraints
    * ``--adp {iso,aniso,fix}``: Atomic displacement parameter (isotropic: 1 parameter per atom, anisotropic: 6 parameters per atom, fixed B-values)
    * ``-d D_MIN, --d_min D_MIN``: High-resolution limit (in Å)
@@ -80,6 +80,35 @@ How it works (alternating, as in ``refi tlsc`` of Refmac): in each cycle, coordi
 
 Output: ``ANISOU`` records (and ``_atom_site_anisotrop``) contain the **total** U, the B-factor column is its isotropic equivalent, and the TLS groups are written to the ``REMARK 3`` records and the ``_pdbx_refine_tls`` categories ("U values: with TLS added"). If an input model with TLS groups has the *residual-only* convention of Refmac, this is detected from ``U VALUES : RESIDUAL ONLY``; otherwise the B-factors in the input are taken as total.
 
+Continuing after editing the model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Together with the model, ``prefix_tls.yaml`` is written. It contains the residue ranges of every TLS group and the refined origin, T, L and S:
+
+.. code-block:: yaml
+
+   refine:
+     tls:
+       input_b: total
+       enforce_psd: true
+       groups:
+         - id: 1
+           selections: ["//A/4-80/*"]
+           origin: [17.08, 8.88, 62.87]
+           T: [..6 values..]   # T11 T22 T33 T12 T13 T23 (A^2)
+           L: [..6 values..]   # L11 L22 L33 L12 L13 L23 (deg^2)
+           S: [..9 values..]   # row-major (A deg)
+
+The TLS groups are also written in the model file (``REMARK 3`` and ``_pdbx_refine_tls``) and read from it if the input model has them, but not every program that edits models keeps those records. After rebuilding, continue with
+
+.. code-block:: console
+
+    $ servalcat refine_xtal --model edited.pdb --hklin data.mtz -s xray --tls_file prefix_tls.yaml
+
+This restarts from the previous T, L and S. The B-factors of the model are taken as total (``input_b: total``, as written by Servalcat; ``residual`` if the model has residual B only), so the TLS part is subtracted to get the residual B. Residues that were added, deleted or renumbered are handled by the ranges: new residues inside a range join the group, residues outside every range (ligands, waters) keep an isotropic B, and a group that has lost all its atoms is dropped with a warning. The origin of a group is moved to its current centre of mass if the group has changed (T, L and S are transformed so that the TLS model is exactly the same). ``--tls_file`` replaces ``refine.tls.groups`` of ``--config``. In a test, a restart from a model whose TLS records had been removed started at Rwork 0.0207, where the previous run had stopped (0.0207); without the yaml it started at 0.064.
+
+Keep the groups fixed during a refinement campaign: changing them between rounds makes R-values and the likelihood of different rounds incomparable. Select again only after a major rebuild or if the data change.
+
 Notes and limitations:
 
    * The residual B is isotropic, so TLS cannot be combined with ``--adp aniso``. Use ``--adp iso`` (default) or ``--adp fix`` (TLS parameters only).
@@ -87,6 +116,49 @@ Notes and limitations:
    * Groups are not determined automatically. Rigid domains, or segments of several residues in flexible chains, are common choices.
    * The overall anisotropic scale B is determined by the scaling step as before; the common anisotropic component of the model is not moved into it when TLS is used.
    * The statistics of each TLS step are in ``prefix_stats.json`` (``tls_step`` and ``tls``).
+
+Automated selection of TLS groups
+---------------------------------
+
+.. code-block:: console
+
+    $ servalcat util tls_select --model refined.pdb --hklin data.mtz -s xray [-o prefix]
+
+The model should be an isotropic model refined with ``refine_xtal``. Data and model options are those of ``refine_xtal``. Every polymer chain is divided into contiguous segments; groups never combine different chains, and waters and ligands are not included.
+
+**Scan.** For N = 1, 2, ... groups per chain (up to ``--max_groups``, default 8; segments have at least ``--min_residues``, default 10, residues), the best division of each chain is found by dynamic programming. The score of a segment is the decrease of the likelihood target that TLS is predicted to give, a quantity that is cheap to calculate for any segment from the per-atom gradient and Fisher matrix that the TLS refinement uses. Each N is then evaluated by a short refinement (``--tls_cycles``, default 8; coordinates fixed, residual B and TLS refined), with exactly the code of ``refine_xtal``; N = 0 is the same refinement without TLS. The log shows R-values as a function of N:
+
+.. code-block:: text
+
+     N  groups  params  Rwork  Rfree  d_Rfree     -LL  dp_score
+     0       0       0 0.0556 0.0650      NaN 89327.5    0.0000
+     1       1      20 0.0345 0.0414   0.0236 76419.3 2439.7
+     2       2      40 0.0234 0.0284   0.0130 66786.3 3016.4
+     3       3      60 0.0230 0.0280   0.0004 66441.3 3120.2
+     4       4      80 0.0229 0.0278   0.0002 66254.0 3206.3
+
+(an example with simulated data from two rigid domains), with a bar graph of R-free versus N, a table for CCP4 loggraph, and the files ``prefix_scan.csv``, ``prefix_scan.json`` (also with the residue ranges of every N) and, if matplotlib is installed, ``prefix_scan.png``. ``dp_score`` is used only to rank divisions with the same N; it is not comparable with the change of -LL, because the real refinement is much more effective than the single Newton step it is derived from.
+
+**Recommendation.** The selection is conservative. With R(N) being Rfree (or R if there is no test set) and d(N) = R(N-1) - R(N):
+
+   * TLS is recommended at all only if one group per chain improves R by ``--min_delta`` (default 0.001).
+   * The number of groups is the lowest N >= 2 whose jump d(N) is within ``--tie`` (default 25%, since R-differences between neighbouring N are noisy) of the biggest jump among N >= 2, i.e. the lowest number of groups that gives the biggest jump in improvement.
+   * If no further group gives a jump of at least ``--min_delta``, one group per chain is recommended.
+
+Residue ranges of the recommendation are written to ``prefix_tls.yaml`` (use it with ``refine_xtal --tls_file``), and those of every other N to ``prefix_tls_N<N>.yaml``. The files of the trial refinements are in ``prefix_trials/``.
+
+**Choosing the number yourself.** With ``--ngroups`` nothing is scanned: the program determines the best residue ranges for the requested numbers and writes them,
+
+.. code-block:: console
+
+    $ servalcat util tls_select ... --ngroups 4            # 4 groups in every polymer chain
+    $ servalcat util tls_select ... --ngroups A:4 B:2      # per chain (chains not mentioned: 1 group)
+
+The R-values for this choice are calculated as above unless ``--no_eval`` is given. If a chain is too short for the requested number of groups of ``--min_residues`` residues, the largest possible number is used (with a warning).
+
+The scan uses the same number of groups for every chain (a chain that cannot be divided that far gets as many as possible), so it cannot tell that chains need different numbers; if they do, look at the curve and set the numbers per chain with ``--ngroups``.
+
+Notes: the residue ranges are written as gemmi selections (``//A/4-80/*``), so a non-polymer residue numbered inside a range is included in the group. The scan takes about (N groups + 1) times the cost of ``--tls_cycles`` cycles of TLS refinement; use ``--max_groups`` or ``--tls_cycles`` to shorten it. The recommendation is based on an R-value difference measured on the same test set, but test sets are small, so look at the whole curve and at ``--ngroups`` results before deciding, and prefer fewer groups at lower resolution.
 
 Input columns for diffraction data
 ----------------------------------

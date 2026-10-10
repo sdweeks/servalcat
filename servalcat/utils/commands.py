@@ -179,6 +179,11 @@ def add_arguments(p):
     parser.add_argument('-B', type=float, required=True, help="B value for blurring (negative value for sharpening)")
     parser.add_argument('-o', '--output_prefix')
 
+    # tls_select
+    from servalcat.refine import tls_select
+    parser = subparsers.add_parser("tls_select", description = 'Automated selection of TLS groups')
+    tls_select.add_arguments(parser)
+
     # sm2mm
     parser = subparsers.add_parser("sm2mm", description = 'Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)')
     parser.add_argument('files', nargs='+', help='Cif/ins/res/hkl files')
@@ -936,6 +941,10 @@ def blur(args):
         raise SystemExit("ERROR: Unsupported file type: {}".format(args.hklin))
 # blur()
 
+def tls_select_main(args):
+    from servalcat.refine import tls_select
+    return tls_select.main(args)
+
 def sm2mm(args):
     set_prefix(args)
     st, mtz = fileio.read_small_molecule_files(args.files)
@@ -1243,6 +1252,9 @@ def set_prefix(args):
         args.output_prefix = f"{fileio.splitext(os.path.basename(args.model))[0]}_fcalc_{args.source}"
     elif args.subcommand == "blur":
         args.output_prefix = fileio.splitext(os.path.basename(args.hklin))[0]
+    elif args.subcommand == "tls_select":
+        from servalcat.refine import tls_select
+        tls_select.set_prefix(args)
     elif args.subcommand == "sm2mm":
         args.output_prefix = os.path.basename(fileio.splitext(args.files[0])[0])
     elif args.subcommand == "json2csv":
@@ -1264,6 +1276,7 @@ def main(args):
                  adp=adp_stats,
                  fcalc=fcalc,
                  blur=blur,
+                 tls_select=tls_select_main,
                  sm2mm=sm2mm,
                  mm2ins=mm2ins,
                  seq=seq,

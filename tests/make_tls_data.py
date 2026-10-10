@@ -75,3 +75,57 @@ def make(outdir):
         cra.atom.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)
     utils.fileio.write_model(st, os.path.join(outdir, "start"), pdb=True)
     return outdir
+
+def make_two_chain(outdir, d_min=2.4):
+    """Noise-free amplitudes of 1e8a (two polymer chains, A and B) with known TLS: one group on chain A and two on
+    chain B (its first and second halves). Writes data.mtz (FP, SIGFP, FreeR_flag), start.pdb, truth.pdb, truth_u.npy
+    and returns the residue number where the two groups of chain B meet (first residue of the second group)"""
+    b_to_u = utils.model.b_to_u
+    st = utils.fileio.read_structure(os.path.join(root, "1e8a", "1e8a.cif.gz"))
+    st.setup_entities()
+    for i, cra in enumerate(st[0].all()):
+        cra.atom.serial = i + 1
+        cra.atom.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)
+    polyA = [r for r in st[0]["A"].get_polymer()]
+    polyB = [r for r in st[0]["B"].get_polymer()]
+    half = len(polyB) // 2
+    segments = [polyA, polyB[:half], polyB[half:]]
+    truth = [
+        (numpy.diag([0.05, 0.04, 0.045]), numpy.diag([2.0, 1.5, 2.5]), numpy.zeros((3, 3))),
+        (numpy.array([[0.040, 0.005, 0.000], [0.005, 0.050, 0.004], [0.000, 0.004, 0.030]]),
+         numpy.array([[4.0, 0.4, 0.2], [0.4, 3.0, -0.3], [0.2, -0.3, 2.5]]),
+         numpy.array([[0.03, 0.02, -0.01], [0.00, 0.01, 0.04], [-0.02, 0.03, -0.04]])),
+        (numpy.array([[0.060, -0.004, 0.002], [-0.004, 0.035, 0.000], [0.002, 0.000, 0.045]]),
+         numpy.array([[1.0, -0.2, 0.0], [-0.2, 0.8, 0.1], [0.0, 0.1, 1.2]]),
+         numpy.array([[-0.02, 0.05, 0.00], [0.03, 0.04, -0.03], [0.01, 0.00, -0.02]])),
+    ]
+    true_u = numpy.zeros((st[0].count_atom_sites(), 6))
+    for cra in st[0].all():
+        u = cra.atom.b_iso * b_to_u
+        true_u[cra.atom.serial - 1] = [u, u, u, 0, 0, 0]
+    for i, (seg, (T, L, S)) in enumerate(zip(segments, truth)):
+        g = tls.TlsGroup(i + 1, [a for r in seg for a in r])
+        g.p = tls.p_from_matrices(T, L, S)
+        for a, u in zip(g.atoms, g.u_tls()):
+            u[:3] += a.b_iso * b_to_u
+            a.aniso = gemmi.SMat33f(*u)
+            true_u[a.serial - 1] = u
+    numpy.save(os.path.join(outdir, "truth_u.npy"), true_u)
+    utils.fileio.write_model(st, os.path.join(outdir, "truth"), pdb=True)
+    hkl = gemmi.make_miller_array(st.cell, st.find_spacegroup(), d_min)
+    fc = utils.model.calc_fc_fft(st, d_min - 1e-6, source="xray", mott_bethe=False, miller_array=hkl)
+    amp = numpy.abs(fc)
+    free = (numpy.random.default_rng(1).uniform(size=len(hkl)) < 0.05).astype(int)
+    m = gemmi.Mtz(with_base=True)
+    m.cell = st.cell
+    m.spacegroup = st.find_spacegroup()
+    m.add_dataset("synth")
+    m.add_column("FreeR_flag", "I")
+    m.add_column("FP", "F")
+    m.add_column("SIGFP", "Q")
+    m.set_data(numpy.column_stack([hkl, free, amp, 0.02 * amp + 0.01 * amp.mean()]))
+    m.write_to_file(os.path.join(outdir, "data.mtz"))
+    for cra in st[0].all():
+        cra.atom.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)
+    utils.fileio.write_model(st, os.path.join(outdir, "start"), pdb=True)
+    return polyB[half].seqid.num

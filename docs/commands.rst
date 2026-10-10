@@ -21,4 +21,4 @@ French-Wilson conversion of intensities to amplitudes.
 
 util
 ----
-Utilities (``servalcat util -h``): ``h_add``, ``geom``, ``adp``, ``fcalc``, ``sm2mm``, ``mm2ins``, ``fix_link``, ``merge_models`` and others.
+Utilities (``servalcat util -h``): ``tls_select`` (automated selection of TLS groups, see :doc:`xtal`), ``h_add``, ``geom``, ``adp``, ``fcalc``, ``sm2mm``, ``mm2ins``, ``fix_link``, ``merge_models`` and others.
