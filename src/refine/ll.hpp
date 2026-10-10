@@ -302,8 +302,9 @@ struct LL{
       const int pos_q = params->get_pos_vec_ll(i, RefineParams::Type::Q);
       const int pos_d = params->get_pos_vec_ll(i, RefineParams::Type::D);
       const bool has_aniso = atom.aniso.nonzero();
+      // adp_mode == 1 with has_aniso: isotropic parameter (e.g. residual B in TLS refinement)
+      // added to an anisotropic total U. d/db is the trace of the gradient wrt the B elements.
       const int adp_mode = pos_b >= 0 ? (params->aniso ? 2 : 1) : 0;
-      if (adp_mode == 1 && has_aniso) gemmi::fail("bad adp_mode");
       for (const gemmi::Transform &tr : ncs) { //TODO to use cell images?
         const gemmi::Fractional fpos = cell.fractionalize(gemmi::Position(tr.apply(atom.pos)));
         const gemmi::SMat33<double> b_aniso = atom.aniso.scaled(gemmi::u_to_b()).added_kI(b_add).transformed_by(tr.mat);
@@ -350,7 +351,7 @@ struct LL{
                                                    const double tmp = precal_aniso.a[j] * std::exp(precal_aniso.b[j].r_u_r(delta));
                                                    const auto tmp2 = precal_aniso.b[j].multiply(delta); // -4pi^2 * (B+b)^-1 . delta
                                                    gx += 2 * tmp * gemmi::Position(tmp2) * point;
-                                                   if (adp_mode == 2) {
+                                                   if (adp_mode >= 1) {
                                                      // d/dp |B| = |B| B^-T
                                                      const auto tmp3 = precal_aniso.b[j].scaled(0.5 * tmp * point).elements_pdb();
                                                      // d/dp r^T B^-1 r = ..
@@ -368,9 +369,11 @@ struct LL{
                                              }, false /* fail_on_too_large_radius */,
                                              radius);
         gx *= atom.occ * neutron_h_f_correction;
-        if (adp_mode == 1)
+        if (adp_mode == 1) {
+          if (has_aniso)
+            gb = gb_aniso[0] + gb_aniso[1] + gb_aniso[2];
           gb *= atom.occ * 0.25 / sq(gemmi::pi()) * neutron_h_f_correction;
-        else if (adp_mode == 2)
+        } else if (adp_mode == 2)
           for (int i = 0; i < 6; ++i)
             gb_aniso[i] *= atom.occ * 0.25 / sq(gemmi::pi()) * neutron_h_f_correction;
 

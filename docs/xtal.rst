@@ -7,7 +7,7 @@ To perform crystallographic refinement with Servalcat, it is necessary to specif
 
 .. code-block:: console
 
-    $ servalcat refine_xtal_norefmac \
+    $ servalcat refine_xtal \
      --model input.pdb --hklin ../data.mtz \
      -s xray \
      [-o prefix]
@@ -28,6 +28,7 @@ Frequently used options
    * ``--ncycle NCYCLE``: Number of refinement cycles. Default: 10
    * ``--weight WEIGHT``: Starting value of the weight for the experimental data term (default: automatically determined from resolution). By default, the weight is further adjusted to achieve bond length rmsZ in the range between 0.5 and 1.0. This can be changed using the option ``--target_bond_rmsz_range MIN_RMSZ MAX_RMSZ``.
    * ``--ncsr``: Use local restraints for non-crystallographic symmetry
+   * ``--tls``, ``--tls_per_chain``, ``--tls_ncycle N``: TLS refinement (see below)
    * ``--jellybody``: Use jelly body restraints
    * ``--adp {iso,aniso,fix}``: Atomic displacement parameter (isotropic: 1 parameter per atom, anisotropic: 6 parameters per atom, fixed B-values)
    * ``-d D_MIN, --d_min D_MIN``: High-resolution limit (in Å)
@@ -41,6 +42,51 @@ Frequently used options
    * ``--keywords KEYWORDS [KEYWORDS ...]``: Keyword(s) in REFMAC5 syntax. See :doc:`supported Refmac keywords <refmac_keywords>`
    * ``--keyword_file KEYWORD_FILE [KEYWORD_FILE ...]``: File with keyword(s) in REFMAC5 syntax  (e.g. ProSMART restraint file)
 
+
+TLS refinement
+--------------
+
+Translation/libration/screw (TLS) refinement models the collective motion of rigid groups of atoms. The total atomic displacement is
+
+.. math::
+
+    U_{\rm total} = U_{\rm TLS}(\mathbf{r}; T, L, S) + \frac{B_{\rm res}}{8\pi^2} I, \qquad
+    U_{\rm TLS} = T + A L A^{\rm T} + A S + S^{\rm T} A^{\rm T},
+
+where :math:`\mathbf{r} = (x, y, z)` is the position relative to the group origin and
+:math:`A = \begin{pmatrix} 0 & z & -y \\ -z & 0 & x \\ y & -x & 0 \end{pmatrix}`.
+The units are the same as in the PDB, Refmac and Phenix: T in Å\ :sup:`2`, L in deg\ :sup:`2` and S in Å·deg. The origin of each group is its centre of mass and is kept fixed. S has 8 free parameters (its trace has no effect on U).
+
+TLS groups are given in the config file (``--config``), using the same selection syntax as for occupancy groups:
+
+.. code-block:: yaml
+
+   refine:
+     tls:
+       groups:
+         - id: 1
+           selections: ["//A/4-80/*"]
+         - id: 2
+           selections: ["//A/81-164/*"]
+       ncycle: 1   # TLS steps per refinement cycle
+
+and TLS refinement is turned on by the groups or with ``--tls``. If no groups are in the config, those stored in the input model (``REMARK 3`` or ``_pdbx_refine_tls``) are used, including their T, L and S values; ``--tls_per_chain`` defines one group per chain. Atoms that are not in any group (e.g. waters) keep their isotropic B.
+
+.. code-block:: console
+
+    $ servalcat refine_xtal --model input.pdb --hklin data.mtz -s xray --config tls.yaml --ncycle 20
+
+How it works (alternating, as in ``refi tlsc`` of Refmac): in each cycle, coordinates, the isotropic *residual* B and occupancies are refined with the TLS parameters fixed; then T, L and S of every group are refined with the atomic parameters fixed. In the second step the gradient and Fisher matrix of the likelihood target with respect to the anisotropic displacement of each atom are projected onto the TLS parameters, and a damped Newton step is taken with T and L kept positive semi-definite, followed by a line search. TLS steps that do not decrease the target are rejected. The ADP restraints act only on the residual B.
+
+Output: ``ANISOU`` records (and ``_atom_site_anisotrop``) contain the **total** U, the B-factor column is its isotropic equivalent, and the TLS groups are written to the ``REMARK 3`` records and the ``_pdbx_refine_tls`` categories ("U values: with TLS added"). If an input model with TLS groups has the *residual-only* convention of Refmac, this is detected from ``U VALUES : RESIDUAL ONLY``; otherwise the B-factors in the input are taken as total.
+
+Notes and limitations:
+
+   * The residual B is isotropic, so TLS cannot be combined with ``--adp aniso``. Use ``--adp iso`` (default) or ``--adp fix`` (TLS parameters only).
+   * TLS refinement usually needs more cycles than default; 20 or more are recommended. Monitor the R-free and the warnings about large libration (L > 20 deg\ :sup:`2`) in the log.
+   * Groups are not determined automatically. Rigid domains, or segments of several residues in flexible chains, are common choices.
+   * The overall anisotropic scale B is determined by the scaling step as before; the common anisotropic component of the model is not moved into it when TLS is used.
+   * The statistics of each TLS step are in ``prefix_stats.json`` (``tls_step`` and ``tls``).
 
 Input columns for diffraction data
 ----------------------------------
@@ -89,7 +135,7 @@ If unmerged data are used, ``CC*`` statistic is also reported. It estimates the 
 Model agreement with ideal geometry
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The geometry of the refined model is assessed in the same way as in refinement against cryoEM SPA maps.
+The geometry of the refined model is assessed against the restraint dictionary (monomer library).
 Root mean square deviations (RMSD) from expected bond lengths and angles are calculated, as well as  their Z-scores (RMSZ), which represent how many standard deviations the observed geometry deviates from the ideal values. 
 
 Importantly, various kinds of individual model geometry outliers with a Z-score greater than 5 are reported in the last cycle of refinement in ``servalcat.log`` and ``output_prefix_stats.json``. It is recommended to inspect these outliers as they can indicate where the model may need improvement.
@@ -111,7 +157,7 @@ Servalcat can also refine small molecules against crystallographic data. A gener
 
 .. code-block:: console
 
-    $ servalcat refine_xtal_norefmac \
+    $ servalcat refine_xtal \
      --model small_molecule.cif --hklin small_molecule.hkl \
      -s xray --unrestrained --hydrogen no --adp aniso --no_solvent \
      [-o prefix]
@@ -130,8 +176,8 @@ Complete list of options
 
 .. code-block:: console
 
-    $ servalcat refine_xtal_norefmac --help
-    usage: servalcat refine_xtal_norefmac [-h] --hklin HKLIN [--hklin_free HKLIN_FREE] [-d D_MIN] [--d_max D_MAX] [--nbins NBINS]
+    $ servalcat refine_xtal --help
+    usage: servalcat refine_xtal [-h] --hklin HKLIN [--hklin_free HKLIN_FREE] [-d D_MIN] [--d_max D_MAX] [--nbins NBINS]
                                         [--nbins_ml NBINS_ML] [--labin LABIN] [--labin_free LABIN_FREE] [--free FREE] --model MODEL
                                         [--monlib MONLIB] [--ligand [LIGAND ...]] [--newligand_continue] [--hydrogen {all,yes,no}] [--hout]
                                         [--jellybody] [--jellybody_params sigma dmax] [--jellyonly] [--find_links]

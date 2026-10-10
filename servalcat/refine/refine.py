@@ -68,6 +68,11 @@ local_geom_weights:
 local_adpr_weights:
   - sel: ..
     w: 1
+tls:
+  groups:
+    - id: 1
+      selections: [sel_1, sel_2]
+  ncycle: 1
 vdw_exclusion:
   selections: []
   pair_selections: []
@@ -121,6 +126,14 @@ class VdwExclusion:
     selections: List[str] = field(default_factory=list)
     pair_selections: List[PairSelection] = field(default_factory=list)
 @dataclass
+class TlsGroupItem:
+    id: int
+    selections: List[str] = field(default_factory=list)
+@dataclass
+class TlsConfig:
+    groups: List[TlsGroupItem] = field(default_factory=list, metadata={"help": "TLS groups; each is a list of gemmi selections"})
+    ncycle: int = field(default=1, metadata={"help": "Number of TLS refinement steps per macro cycle"})
+@dataclass
 class RefineConfig:
     atom_selection: Dict[str, SelectionConfig] = field(
         default_factory=lambda: {
@@ -141,6 +154,7 @@ class RefineConfig:
     geom_weights: RestraintWeights = field(default_factory=RestraintWeights)
     local_geom_weights: List[SelectionAndWeightItem] = field(default_factory=list)
     local_adpr_weights: List[SelectionAndWeightItem] = field(default_factory=list)
+    tls: TlsConfig = field(default_factory=TlsConfig)
     initialisation: Dict[str, Dict[str, float]] = field(
         default_factory=lambda: {
             "adp": {},
@@ -768,9 +782,10 @@ class GroupOccupancy:
 
 
 class Refine:
-    def __init__(self, st, geom, cfg, refine_params, ll=None, unrestrained=False):
+    def __init__(self, st, geom, cfg, refine_params, ll=None, unrestrained=False, tls=None):
         assert geom is not None
         self.st = st # clone()?
+        self.tls = tls # TlsModel (see tls.py)
         self.st_traj = None
         self.params = refine_params
         self.geom = geom
@@ -785,7 +800,7 @@ class Refine:
         if self.cfg.write_trajectory:
             self.st_traj = self.st.clone()
             self.st_traj[-1].num = 0
-        assert self.geom.group_occ.groups or self.params.n_params() > 0
+        assert self.geom.group_occ.groups or self.params.n_params() > 0 or self.tls is not None
     # __init__()
     
     def print_weights(self): # TODO unfinished
@@ -873,6 +888,8 @@ class Refine:
             max_occ = {atom: 1./(len(images)+1) for atom, images, _, _ in self.geom.specs}
         for a in self.params.atoms:
             a.occ = min(max_occ.get(a, 1), max(0, a.occ))
+        if self.tls is not None: # total U = U_tls + residual B (atom.b_iso)
+            self.tls.apply()
         # Copy B of hydrogen from parent
         #if self.h_inherit_parent_adp:
         #    for h in self.geom.parents:
@@ -1017,6 +1034,8 @@ class Refine:
                 stats[-1]["twin_alpha"] = llstats["twin_alpha"]
             show_binstats(llstats["bin_stats"], 0)
         if self.params.is_refined(Type.B):
+            if self.tls is not None:
+                logger.writeln("(B values of TLS atoms are residual B, without the TLS contribution)")
             utils.model.adp_analysis(self.st)
         if stats_json_out:
             write_stats_json_safe(stats, stats_json_out)
@@ -1029,10 +1048,16 @@ class Refine:
                 is_ok, shift_scale, fval = self.run_cycle(weight=weight)
                 stats.append({"Ncyc": len(stats), "shift_scale": shift_scale, "fval": fval, "fval_decreased": is_ok,
                               "weight": weight})
-            elif occ_refine_flag:
+            elif occ_refine_flag or self.tls is not None:
                 stats.append({"Ncyc": len(stats)})
             if occ_refine_flag:
                 stats[-1]["occ_refine"] = self.geom.group_occ.refine(self.ll)
+            if self.tls is not None and self.ll is not None:
+                # alternating: TLS parameters with atomic parameters fixed
+                stats[-1]["tls_step"] = self.tls.refine(self.ll)
+                stats[-1]["tls"] = self.tls.summary()
+                if i == ncycles - 1:
+                    self.tls.show()
             if debug: utils.fileio.write_model(self.st, "refined_{:02d}".format(i+1), pdb=True)#, cif=True)
             stats[-1]["geom"] = self.geom.show_model_stats(show_outliers=(i==ncycles-1))
             if self.params.occ_group_constraints:

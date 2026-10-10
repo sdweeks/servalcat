@@ -17,6 +17,7 @@ from servalcat import utils
 from servalcat.xtal.sigmaa import decide_mtz_labels, process_input
 from servalcat.refine.xtal import LL_Xtal
 from servalcat.refine.refine import Geom, Refine, RefineParams, update_meta, print_h_options, load_config
+from servalcat.refine import tls as tls_mod
 from servalcat.refmac import refmac_keywords
 from servalcat import ext
 b_to_u = utils.model.b_to_u
@@ -94,6 +95,13 @@ def add_arguments(parser):
     parser.add_argument('--adp_restraint_mode', choices=["diff", "kldiv"], default="kldiv")
     parser.add_argument('--unrestrained',  action='store_true', help="No positional restraints")
     parser.add_argument('--refine_h', action="store_true", help="Refine hydrogen (default: restraints only)")
+    parser.add_argument('--tls', action="store_true",
+                        help="TLS refinement (with isotropic residual B). TLS groups are taken from refine.tls.groups "
+                        "in the config file, or from the input model")
+    parser.add_argument('--tls_per_chain', action="store_true",
+                        help="TLS refinement with one TLS group per chain (when no groups are defined)")
+    parser.add_argument('--tls_ncycle', type=int,
+                        help="Number of TLS steps per refinement cycle (default: 1)")
     parser.add_argument('--refine_dfrac', action="store_true", help="Refine deuterium fraction (neutron only)")
     parser.add_argument('--twin', action="store_true", help="Turn on twin refinement")
     parser.add_argument('--twin_mlalpha', action="store_true", help="Use ML optimisation for twin fractions")
@@ -311,20 +319,33 @@ def main(args):
             raise ValueError("unknown function type")
     else:
         robust_func = None
+    tls = None
+    if args.tls or args.tls_per_chain or refine_cfg.tls.groups:
+        if args.adp == "aniso":
+            raise SystemExit("Error: TLS refinement uses an isotropic residual B; use --adp iso (or --adp fix) "
+                             "instead of --adp aniso")
+        tls = tls_mod.setup_tls(st, refine_cfg.tls, per_chain=args.tls_per_chain, ncycle=args.tls_ncycle,
+                                specials=geom.geom.specials, exclude_h_ll=not args.refine_h,
+                                model_path=args.model)
     ll = LL_Xtal(hkldata, args.free, st, monlib, source=args.source,
                  use_solvent=0 if args.no_solvent else 2 if args.non_binary_solvent_mask else 1,
                  use_in_est=use_in_est, use_in_target=use_in_target,
                  twin=args.twin, twin_mlalpha=args.twin_mlalpha,
                  addends=addends, addends2=addends2, is_int=is_int,
                  robust_func=robust_func)
+    ll.tls = tls
     refiner = Refine(st, geom, refine_cfg, refine_params, ll=ll,
-                     unrestrained=args.unrestrained)
+                     unrestrained=args.unrestrained, tls=tls)
 
     stats = refiner.run_cycles(args.ncycle, weight=args.weight,
                                weight_adjust=not args.no_weight_adjust,
                                weight_adjust_bond_rmsz_range=args.target_bond_rmsz_range,
                                stats_json_out=args.output_prefix + "_stats.json")
+    if tls is not None:
+        tls.finalize() # B values in the output are those of the total U
     update_meta(st, stats[-1], ll)
+    if tls is not None:
+        tls_mod.update_meta_tls(st, tls)
     st.meta.software = software_items + st.meta.software
     refiner.st.name = args.output_prefix
     utils.fileio.write_model(refiner.st, args.output_prefix, pdb=True, cif=True, hout=args.hout)
