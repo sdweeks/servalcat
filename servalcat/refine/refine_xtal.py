@@ -12,6 +12,7 @@ import pandas
 import os
 import shutil
 import argparse
+import types
 from servalcat.utils import logger
 from servalcat import utils
 from servalcat.xtal.sigmaa import decide_mtz_labels, process_input
@@ -146,7 +147,9 @@ def set_prefix(args):
         args.output_prefix = utils.fileio.splitext(os.path.basename(args.model))[0] + "_refined"
 # set_prefix()
 
-def main(args):
+def setup(args, use_tls=True):
+    """Read data and model, prepare restraints, ML target and the Refine object (everything before the cycles)
+    Returns a namespace; also used by util tls_select"""
     if args.refine_dfrac and args.source != "neutron": # TODO should check params.is_refined()
         raise SystemExit("--refine_dfrac can only be used for the neutron source")
     if args.labin_llweight and args.twin:
@@ -323,7 +326,7 @@ def main(args):
     else:
         robust_func = None
     tls = None
-    if args.tls or args.tls_per_chain or refine_cfg.tls.groups:
+    if use_tls and (args.tls or args.tls_per_chain or refine_cfg.tls.groups):
         if args.adp == "aniso":
             raise SystemExit("Error: TLS refinement uses an isotropic residual B; use --adp iso (or --adp fix) "
                              "instead of --adp aniso")
@@ -339,7 +342,15 @@ def main(args):
     ll.tls = tls
     refiner = Refine(st, geom, refine_cfg, refine_params, ll=ll,
                      unrestrained=args.unrestrained, tls=tls)
+    return types.SimpleNamespace(refiner=refiner, refine_cfg=refine_cfg, software_items=software_items,
+                                 ll=ll, st=st, hkldata=hkldata, is_int=is_int, tls=tls, geom=geom,
+                                 refine_params=refine_params, monlib=monlib, use_in_target=use_in_target)
+# setup()
 
+def main(args):
+    ctx = setup(args)
+    refiner, refine_cfg, software_items = ctx.refiner, ctx.refine_cfg, ctx.software_items
+    ll, st, hkldata, is_int, tls = ctx.ll, ctx.st, ctx.hkldata, ctx.is_int, ctx.tls
     stats = refiner.run_cycles(args.ncycle, weight=args.weight,
                                weight_adjust=not args.no_weight_adjust,
                                weight_adjust_bond_rmsz_range=args.target_bond_rmsz_range,
