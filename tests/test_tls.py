@@ -78,8 +78,7 @@ class TestTlsRefine(unittest.TestCase):
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0].atoms), st[0].count_atom_sites()) # "SELECTION: ALL"
         T, L, S = groups[0].tensors()
-        self.assertGreaterEqual(numpy.linalg.eigvalsh(T).min(), -1e-12) # projected on PSD
-        self.assertAlmostEqual(numpy.trace(S), 0.)
+        self.assertAlmostEqual(numpy.trace(S), 0.) # the trace of S is not a parameter
 
     def test_refine_tls_from_model(self):
         mtzin = os.path.join(root, "5e5z", "5e5z.mtz.gz")

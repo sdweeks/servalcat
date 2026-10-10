@@ -13,7 +13,6 @@ import gemmi
 import numpy
 import json
 import pandas
-import scipy.sparse
 from dataclasses import dataclass, field
 from typing import List, Dict
 import omegaconf
@@ -23,7 +22,6 @@ from servalcat import utils
 from servalcat.refmac import exte
 from servalcat.refmac import refmac_keywords
 from servalcat import ext
-from . import cgsolve
 u_to_b = utils.model.u_to_b
 b_to_u = utils.model.b_to_u
 Type = ext.RefineParams.Type
@@ -73,6 +71,7 @@ tls:
     - id: 1
       selections: [sel_1, sel_2]
   ncycle: 1
+  enforce_psd: true
 vdw_exclusion:
   selections: []
   pair_selections: []
@@ -133,6 +132,7 @@ class TlsGroupItem:
 class TlsConfig:
     groups: List[TlsGroupItem] = field(default_factory=list, metadata={"help": "TLS groups; each is a list of gemmi selections"})
     ncycle: int = field(default=1, metadata={"help": "Number of TLS refinement steps per macro cycle"})
+    enforce_psd: bool = field(default=True, metadata={"help": "Keep T and L positive semi-definite. If false, only the total U of each atom is required to be positive definite"})
 @dataclass
 class RefineConfig:
     atom_selection: Dict[str, SelectionConfig] = field(
@@ -925,66 +925,13 @@ class Refine:
 
     #@profile
     def run_cycle(self, weight=1):
-        if 0: # test of grad
-            self.ll.update_fc()
-            x0 = self.get_x()
-            f0,ader,_ = self.calc_target(weight)
-            i = 1
-            for e in 1e-1,1e-2,1e-3, 1e-4, 1e-5:
-                x1 = numpy.copy(x0)
-                x1[i] += e
-                self.set_x(x1)
-                self.ll.update_fc()
-                f1,_,_ = self.calc_target(weight, target_only=True)
-                nder = (f1 - f0) / e
-                print("e=", e)
-                print("NUM DER=", nder)
-                print("ANA DER=", ader[i])
-                print("ratio=", nder/ader[i])
-            quit()
-
         f0 = self.calc_target(weight)
         x0 = self.get_x()
         logger.writeln("f0= {:.4e}".format(f0))
-        if 0:
-            logger.writeln(f"geom_vec=\n{self.geom.geom.target.vn}")
-            logger.writeln(f"geom_mat=\n{self.geom.geom.target.am_spmat}")
-            logger.writeln(f"  ll_vec=\n{self.ll.ll.vn}")
-            logger.writeln(f"  ll_mat=\n{self.ll.ll.fisher_spmat}")
-        if 1:
-            use_ic = False # incomplete cholesky. problematic at least in geometry optimisation case
-            logger.writeln("using cgsolve in c++, ic={}".format(use_ic))
-            cgsolver = ext.CgSolve(self.geom.geom.target, None if self.ll is None else self.ll.ll)
-            if use_ic:
-                cgsolver.gamma = 0
-                cgsolver.max_gamma_cyc = 1
-            else:
-                cgsolver.gamma = self.gamma
-            dx = cgsolver.solve(weight, logger, use_ic)
-            self.gamma = cgsolver.gamma
-        else:
-            logger.writeln("using cgsolve in py")
-            am = self.geom.geom.target.am_spmat
-            vn = numpy.array(self.geom.geom.target.vn)
-            if self.ll is not None:
-                am += self.ll.ll.fisher_spmat * weight
-                vn += numpy.array(self.ll.ll.vn) * weight
-            diag = am.diagonal()
-            diag[diag<=0] = 1.
-            diag = numpy.sqrt(diag)
-            rdiag = 1./diag # sk
-            M = scipy.sparse.diags(rdiag)
-            dx, self.gamma = cgsolve.cgsolve_rm(A=am, v=vn, M=M, gamma=self.gamma)
-
-        if 0: # to check hessian scale
-            with open("minimise_line.dat", "w") as ofs:
-                ofs.write("s f\n")
-                for s in numpy.arange(-2, 2, 0.1):
-                    dx2 = self.scale_shifts(dx, s)
-                    self.set_x(x0 + dx2)
-                    fval = self.calc_target(weight, target_only=True)
-                    ofs.write("{} {}\n".format(s, fval))
-            quit()
+        cgsolver = ext.CgSolve(self.geom.geom.target, None if self.ll is None else self.ll.ll)
+        cgsolver.gamma = self.gamma
+        dx = cgsolver.solve(weight, logger, False) # False: no incomplete cholesky (problematic in geometry optimisation)
+        self.gamma = cgsolver.gamma
 
         ret = True # success
         shift_scale = 1

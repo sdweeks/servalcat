@@ -35,8 +35,10 @@ the 6 anisotropic B elements of every atom are projected on the TLS parameters,
 
     g_p = sum_a J_a^T g_a ,       H_p = sum_a J_a^T H_a J_a ,      J_a = dU_a / dp ,
 
-and a Levenberg-Marquardt step (with T and L projected on the positive semi-definite cone
-and a line search on -LL) is taken.
+and a Levenberg-Marquardt step with a line search on -LL is taken. T and L are kept positive
+semi-definite (enforce_psd, default) by projecting every trial on the cone, and the total U of every atom
+must stay positive definite. With enforce_psd=False only the total U is constrained, as in Phenix; on
+test data this let T and L become unphysical (negative T) and R-free drifted up.
 """
 from __future__ import absolute_import, division, print_function, generators
 import re
@@ -161,10 +163,11 @@ class TlsGroup:
         return tls_matrices(self.p)
 
 class TlsModel:
-    def __init__(self, st, groups, ncycle=1, min_b=0.5, specials=(), exclude_h_ll=True):
+    def __init__(self, st, groups, ncycle=1, min_b=0.5, specials=(), exclude_h_ll=True, enforce_psd=True):
         self.st = st
         self.groups = groups
         self.ncycle = ncycle
+        self.enforce_psd = enforce_psd
         self.min_b = min_b
         self.mu = 0.1 # Levenberg-Marquardt damping (relative to the diagonal)
         self.finalized = False
@@ -311,7 +314,9 @@ class TlsModel:
             for trial in range(5):
                 scale = 0.5**trial
                 for g, p0, dp in zip(self.groups, p_old, dps):
-                    g.p = project_psd(p0 + scale * dp)
+                    g.p = p0 + scale * dp
+                    if self.enforce_psd:
+                        g.p = project_psd(g.p)
                 if not self.is_valid():
                     continue
                 self.apply()
@@ -322,7 +327,8 @@ class TlsModel:
                     accepted = True
                     break
             if accepted:
-                self.mu = max(self.mu / 3., 1e-3)
+                # the full step is accepted: less damping; a shortened step: more damping
+                self.mu = max(self.mu / 3., 1e-3) if scale == 1. else self.mu * (1. if scale == 0.5 else 3.)
             else:
                 for g, p0 in zip(self.groups, p_old):
                     g.p = p0
@@ -330,7 +336,7 @@ class TlsModel:
                 ll.update_fc()
                 f1, scale = f0, 0.
                 self.mu = min(self.mu * 5., 1e3)
-                logger.writeln("WARNING: -LL was not decreased by the TLS step; parameters unchanged")
+                logger.writeln("WARNING: no TLS step decreased -LL; TLS parameters unchanged in this cycle")
             ret.append({"f0": f0, "f1": f1, "scale": scale, "accepted": accepted, "mu": self.mu})
         return ret
 
@@ -357,7 +363,10 @@ class TlsModel:
             logger.writeln("  T (A^2): " + " ".join(f"{x:.4f}" for x in sym6(T)) + "   (11 22 33 12 13 23)")
             logger.writeln("  L (deg^2): " + " ".join(f"{x:.4f}" for x in sym6(L)) + "   (11 22 33 12 13 23)")
             logger.writeln("  S (A deg): " + " ".join(f"{x:.4f}" for x in S.reshape(-1)) + "   (row-major)")
-            lw = numpy.linalg.eigvalsh(L)
+            tw, lw = numpy.linalg.eigvalsh(T), numpy.linalg.eigvalsh(L)
+            if tw.min() < -1e-6 or lw.min() < -1e-6:
+                logger.writeln(f"  WARNING: T or L is not positive semi-definite (min eigenvalues: T {tw.min():.4f}, L {lw.min():.4f}); "
+                               "the TLS model is not physical for this group")
             if lw.max() > 20.:
                 logger.writeln(f"  WARNING: large libration (max eigenvalue of L= {lw.max():.1f} deg^2); check the group definition")
         logger.writeln("")
@@ -477,11 +486,8 @@ def groups_from_model(st):
         if not atoms:
             logger.writeln(f"WARNING: TLS group {gid} in the input model has no atoms; ignored")
             continue
-        p_psd = project_psd(p)
-        if not numpy.allclose(p, p_psd):
-            logger.writeln(f"WARNING: T or L of TLS group {gid} in the input model is not positive semi-definite; "
-                           "negative eigenvalues set to zero")
-            p = p_psd
+        if not numpy.allclose(p, project_psd(p)):
+            logger.writeln(f"WARNING: T or L of TLS group {gid} in the input model is not positive semi-definite")
         try:
             gid = int(gid)
         except ValueError:
@@ -528,7 +534,8 @@ def setup_tls(st, cfg_tls, per_chain=False, ncycle=None, specials=(), exclude_h_
                              "or use --tls_per_chain.")
     if ncycle is None:
         ncycle = cfg_tls.ncycle
-    model = TlsModel(st, groups, ncycle=ncycle, specials=specials, exclude_h_ll=exclude_h_ll)
+    model = TlsModel(st, groups, ncycle=ncycle, specials=specials, exclude_h_ll=exclude_h_ll,
+                     enforce_psd=cfg_tls.enforce_psd)
     if from_model and model_path and not detect_residual_only(model_path):
         logger.writeln("TLS: B-factors in the input model are taken as total; TLS contribution removed to get residual B")
         initialise_residual_from_total(model)
