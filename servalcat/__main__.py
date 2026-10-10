@@ -14,20 +14,10 @@ import gemmi
 import numpy
 import scipy
 import pandas
-import servalcat.spa.shiftback
-import servalcat.spa.run_refmac
-import servalcat.spa.fsc
-import servalcat.spa.fofc
-import servalcat.spa.shift_maps
-import servalcat.spa.translate
-import servalcat.spa.localcc
-import servalcat.xtal.run_refmac_small
 import servalcat.xtal.sigmaa
-import servalcat.refmac.refmac_wrapper
 import servalcat.xtal.french_wilson
 import servalcat.utils.commands
 import servalcat.refine.refine_geom
-import servalcat.refine.refine_spa
 import servalcat.refine.refine_xtal
 
 from servalcat.utils import logger
@@ -64,35 +54,26 @@ def test_installation():
 
 def main():
     parser = argparse.ArgumentParser(prog="servalcat",
-                                     description="A tool for model refinement and map calculation for crystallography and cryo-EM SPA.")
+                                     description="A tool for model refinement and map calculation for X-ray crystallography.")
     parser.add_argument("--skip_test", action="store_true", help="Skip installation test")
     parser.add_argument("-v", "--version", action="store_true")
     parser.add_argument("--logfile")
     subparsers = parser.add_subparsers(dest="command")
 
-    modules = dict(shiftback=servalcat.spa.shiftback,
-                   refine_spa=servalcat.spa.run_refmac,
-                   refine_cx=servalcat.xtal.run_refmac_small,
-                   fsc=servalcat.spa.fsc,
-                   fofc=servalcat.spa.fofc,
-                   trim=servalcat.spa.shift_maps,
-                   translate=servalcat.spa.translate,
-                   localcc=servalcat.spa.localcc,
-                   sigmaa=servalcat.xtal.sigmaa,
+    modules = dict(sigmaa=servalcat.xtal.sigmaa,
                    fw=servalcat.xtal.french_wilson,
-                   #show=servalcat.utils.show,
                    util=servalcat.utils.commands,
-                   refmac5=servalcat.refmac.refmac_wrapper,
                    refine_geom=servalcat.refine.refine_geom,
-                   refine_spa_norefmac=servalcat.refine.refine_spa,
-                   refine_xtal_norefmac=servalcat.refine.refine_xtal,
+                   refine_xtal=servalcat.refine.refine_xtal,
                    )
+    aliases = dict(refine_xtal_norefmac="refine_xtal") # backward compatibility
 
     for n in modules:
-        p = subparsers.add_parser(n)
+        p = subparsers.add_parser(n, aliases=[a for a, t in aliases.items() if t == n])
         modules[n].add_arguments(p)
 
     args = parser.parse_args()
+    args.command = aliases.get(args.command, args.command)
 
     if args.version:
         logger.write_header(head="", show_command=False)
