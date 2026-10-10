@@ -11,7 +11,7 @@ Servalcat provides options for handling hydrogen atoms during refinement. Becaus
 Control keywords
 ----------------
 
-The following options are available for ``refine_xtal_norefmac`` and ``refine_spa_norefmac``.
+The following options are available for ``refine_xtal``.
 
 .. option:: --hydrogen <all|yes|no>
 

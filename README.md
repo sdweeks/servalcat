@@ -4,19 +4,15 @@
 
 **S**tructur**e** **r**efinement and **val**idation for **c**rystallography and single p**a**r**t**icle analysis
 
-Servalcat implements pipelines that use Refmac5:
-  * `servalcat refine_spa`: cryo-EM SPA refinement pipeline
-  * `servalcat refine_cx`: small molecule crystallography
+This fork is reduced to **X-ray crystallographic refinement without the REFMAC5 binary**
+(it can also refine against neutron or electron diffraction data).
 
-and a Refmac5 controller
-  * `refmacat`: behaves as Refmac, but uses GEMMI for restraint generation instead of MAKECIF
-
-Now “No Refmac5” refinement programs have been actively developed:
-  * `servalcat refine_geom`: geometry optimization
-  * `servalcat refine_spa_norefmac`: "No Refmac" version of refine\_spa
-  * `servalcat refine_xtal_norefmac`: crystallographic refinement
-
-Also, it has several utility commands: `servalcat util`.
+Main commands:
+  * `servalcat refine_xtal`: crystallographic refinement (maximum likelihood; coordinates, isotropic ADPs or isotropic residual B + TLS, anisotropic ADPs, occupancies, twinning); `refine_xtal_norefmac` is kept as an alias
+  * `servalcat refine_geom`: geometry optimisation
+  * `servalcat sigmaa`: ML parameter estimation and map calculation
+  * `servalcat fw`: French-Wilson conversion of intensities
+  * `servalcat util`: utilities
 
 ## Installation
 
@@ -32,7 +28,7 @@ will install the stable version.
 Starting from ver. 0.4.146, a pre-release version of GEMMI is bundled with Servalcat by default.
 The current version in use is 0.7.6-dev ([v0.7.5-181-g92e8cfa8](https://github.com/project-gemmi/gemmi/commit/92e8cfa80cf10bd0d0927946da9f6a3aaf998c85)).
 
-To use the Refmac5 related commands, you also need to install [CCP4](https://www.ccp4.ac.uk/). For "No Refmac5" commands, you may just need [the monomer library](https://github.com/MonomerLibrary/monomers) if CCP4 is not installed.
+CCP4 and REFMAC5 are not needed. You need [the monomer library](https://github.com/MonomerLibrary/monomers) (or CCP4's copy; set `$CLIBD_MON` or use `--monlib`) for restrained refinement.
 
 ### Installing the latest (unstable) version
 

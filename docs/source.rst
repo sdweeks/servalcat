@@ -1,7 +1,7 @@
 Scattering source
 =================
 
-The *refine_xtal_norefmac* and *refine_spa_norefmac* programs accept the ``--source`` option, where the scattering source (``xray``, ``electron``, ``neutron``, or ``custom``) can be specified.
+The *refine_xtal* program accept the ``--source`` option, where the scattering source (``xray``, ``electron``, ``neutron``, or ``custom``) can be specified.
 The following sections describe how this option affects refinement and map calculation.
 
 X-ray
