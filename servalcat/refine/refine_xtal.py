@@ -114,8 +114,8 @@ def add_arguments(parser):
     parser.add_argument('--refine_dfrac', action="store_true", help="Refine deuterium fraction (neutron only)")
     parser.add_argument('--twin', action="store_true", help="Turn on twin refinement")
     parser.add_argument('--twin_mlalpha', action="store_true", help="Use ML optimisation for twin fractions")
-    parser.add_argument("-s", "--source", choices=["electron", "xray", "neutron", "custom"], required=True,
-                        help="Radiation source; use xray for X-ray data")
+    parser.add_argument("-s", "--source", choices=["electron", "xray", "neutron", "custom"], default="xray",
+                        help="Radiation source (default: %(default)s)")
     parser.add_argument("--wavelength", type=float, help="For f_prime")
     parser.add_argument('--no_solvent',  action='store_true',
                         help="Do not consider bulk solvent contribution")

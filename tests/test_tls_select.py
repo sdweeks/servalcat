@@ -122,6 +122,14 @@ class TestTlsSelect(unittest.TestCase):
         self.assertLessEqual(abs(rng[0][2] - 80), 3, msg=str(rng))
         self.assertEqual(rng[1][1], rng[0][2] + 1)
 
+    def test_source_defaults_to_xray(self):
+        # no -s/--source: X-ray is the default
+        sys.argv = ["", "util", "tls_select", "--model", "start.pdb", "--hklin", "data.mtz",
+                    "--labin", "FP,SIGFP,FreeR_flag", "--no_solvent", "--hydrogen", "no", "--ngroups", "2", "--no_eval",
+                    "-o", "nosrc"]
+        main()
+        self.assertEqual(len(self.read_ranges("nosrc_tls.yaml")), 2)
+
     def test_ngroups_per_chain_ranges_tile_the_chain(self):
         self.run_select(["--ngroups", "A:4", "--min_residues", "15", "--no_eval"])
         rng = self.read_ranges("sel_tls.yaml")
@@ -176,6 +184,16 @@ class TestTlsSelect(unittest.TestCase):
             tls_select.run_trials(a, specs, 1, 2)
 
 class TestParallelHelpers(unittest.TestCase):
+    def test_radiation_source_default(self):
+        from servalcat.refine import refine_xtal
+        from servalcat.xtal import sigmaa
+        for mod, extra in ((refine_xtal, ["--model", "m.pdb", "--hklin", "d.mtz"]), (sigmaa, ["--model", "m.pdb", "--hklin", "d.mtz"])):
+            p = argparse.ArgumentParser()
+            mod.add_arguments(p)
+            self.assertEqual(p.parse_args(extra).source, "xray")
+            self.assertEqual(p.parse_args(extra + ["-s", "neutron"]).source, "neutron")
+            self.assertEqual(p.parse_args(extra + ["--source", "electron"]).source, "electron")
+
     def test_available_cpus(self):
         n = tls_select.available_cpus()
         self.assertGreaterEqual(n, 1)

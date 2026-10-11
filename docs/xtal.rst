@@ -223,7 +223,7 @@ Importantly, various kinds of individual model geometry outliers with a Z-score 
 Radiation sources
 -----------------
 
-Radiation sources can be changed by using the ``-s`` or ``--source`` option (xray, neutron, electron); see :doc:`source`.
+The radiation source is X-ray by default. Other sources are selected with the ``-s`` or ``--source`` option (neutron, electron, custom); see :doc:`source`.
 
 When performing refinement against neutron diffraction data, it is possible to refine deuterium fraction using the option ``--refine_dfrac``.
 In this case, an extra output file ``output_prefix_expanded.mmcif`` is created for the purpose of deposition to the PDB. The bond lengths and their sigmas from ``_chem_comp_bond.value_dist_nucleus`` and ``_chem_comp_bond.value_dist_nucleus_esd`` are used.
@@ -267,7 +267,7 @@ Complete list of options
                                         [--adp {fix,iso,aniso}] [--refine_all_occ] [--max_dist_for_adp_restraint MAX_DIST_FOR_ADP_RESTRAINT]
                                         [--adp_restraint_power ADP_RESTRAINT_POWER] [--adp_restraint_exp_fac ADP_RESTRAINT_EXP_FAC]
                                         [--adp_restraint_no_long_range] [--adp_restraint_mode {diff,kldiv}] [--unrestrained] [--refine_h]
-                                        [--refine_dfrac] [--twin] -s {electron,xray,neutron} [--no_solvent] [--use_in_est {all,work,test}]
+                                        [--refine_dfrac] [--twin] [-s {electron,xray,neutron,custom}] [--no_solvent] [--use_in_est {all,work,test}]
                                         [--keep_charges] [--keep_entities] [--allow_unusual_occupancies] [-o OUTPUT_PREFIX]
                                         [--write_trajectory] [--vonmises] [--prefer_intensity] [--use_fw] [--config CONFIG]
 
@@ -329,7 +329,8 @@ Complete list of options
     --refine_h            Refine hydrogen (default: restraints only)
     --refine_dfrac        Refine deuterium fraction (neutron only)
     --twin                Turn on twin refinement
-    -s {electron,xray,neutron}, --source {electron,xray,neutron}
+    -s {electron,xray,neutron,custom}, --source {electron,xray,neutron,custom}
+                          Radiation source (default: xray)
     --no_solvent          Do not consider bulk solvent contribution
     --use_in_est {all,work,test}
                             Which set of reflections to use for the ML parameter estimation. Default: 'work' if --twin is set; otherwise

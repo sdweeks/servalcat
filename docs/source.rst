@@ -1,7 +1,7 @@
 Scattering source
 =================
 
-The *refine_xtal* program accept the ``--source`` option, where the scattering source (``xray``, ``electron``, ``neutron``, or ``custom``) can be specified.
+The *refine_xtal* program accepts the ``--source`` (``-s``) option, where the scattering source (``xray``, ``electron``, ``neutron``, or ``custom``) can be specified. The default is ``xray``, so the option can be omitted for X-ray data.
 The following sections describe how this option affects refinement and map calculation.
 
 X-ray

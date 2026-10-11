@@ -48,8 +48,8 @@ def add_arguments(parser):
                         help="Number of bins for statistics (default: auto)")
     parser.add_argument('--nbins_ml', type=int,
                         help="Number of bins for ML parameters (default: auto)")
-    parser.add_argument('-s', '--source', choices=["electron", "xray", "neutron"], required=True,
-                        help="Scattering factor choice")
+    parser.add_argument('-s', '--source', choices=["electron", "xray", "neutron"], default="xray",
+                        help="Scattering factor choice (default: %(default)s)")
     parser.add_argument("--wavelength", type=float, help="For f_prime")
     parser.add_argument('--D_trans', choices=["exp", "splus"],
                         help="estimate D with positivity constraint")
