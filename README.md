@@ -320,7 +320,8 @@ Occupancy refinement is described in [`docs/occ_refine.rst`](docs/occ_refine.rst
 | `servalcat fw` | French–Wilson conversion of intensities to amplitudes (`--hklin`, `--labin I,SIGI`) |
 | `servalcat util <subcommand>` | `tls_select` (below), `h_add`, `add_op3`, `geom`, `adp`, `conf`, `fcalc`, `blur`, `map_peaks`, `h_density`, `fix_link`, `merge_models`, `merge_dicts`, `sm2mm`, `mm2ins`, `seq`, `dnarna`, `exte`, `show`, `json2csv` |
 
-Each has `-h` for its options (`servalcat util <subcommand> -h`).
+Each has `-h` for its options (`servalcat util <subcommand> -h`). `refine_xtal`, `util tls_select`, `sigmaa` and
+`refine_geom` list them in the same three tiers (required; optional with stated defaults; off unless given).
 
 ---
 

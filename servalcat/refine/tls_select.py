@@ -46,7 +46,7 @@ _HIDDEN = ("ncycle", "fix_xyz", "tls", "tls_per_chain", "tls_file", "tls_ncycle"
 
 def add_arguments(parser):
     def own_options(parser):
-        add = refine_xtal._add
+        add = utils.cli.add_arg
         g = parser.add_argument_group("TLS selection: optional arguments with default values")
         add(g, "--max_groups", type=int, default=8, metavar="N",
             help="Largest number of groups per chain in the scan")

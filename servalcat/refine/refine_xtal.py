@@ -12,8 +12,6 @@ import pandas
 import os
 import shutil
 import argparse
-import functools
-import textwrap
 import types
 from servalcat.utils import logger
 from servalcat import utils
@@ -25,45 +23,29 @@ from servalcat.refmac import refmac_keywords
 from servalcat import ext
 b_to_u = utils.model.b_to_u
 
-def _add(group, *names, show=None, **kw):
-    """add_argument whose help always ends with the default. show: text of the default if it is not simply the
-    argparse default (e.g. 'auto'); flags (store_true) show 'off'; '' adds nothing (required arguments)."""
-    h = kw.get("help")
-    if h and h is not argparse.SUPPRESS and show != "":
-        if show is None:
-            if kw.get("action") == "store_true": show = "off"
-            elif kw.get("default") is not None: show = "%(default)s"
-            else: show = "none"
-        kw["help"] = "{} (default: {})".format(h, show)
-    return group.add_argument(*names, **kw)
+_add = utils.cli.add_arg
 
 def add_arguments(parser, after_required=None):
     """Arguments are in three tiers: (1) required, (2) optional with default values, (3) optional features that are
     off unless given. after_required(parser): called before tiers 2 and 3 so that a program built on this one
     (tls_select) can list its own options first."""
-    parser.description = textwrap.fill("Restrained maximum-likelihood refinement of a crystallographic model against "
-                                       "X-ray data (isotropic or anisotropic ADPs, optional TLS), without the refmac5 "
-                                       "binary.", 78)
-    parser.usage = "{} --hklin FILE --model FILE [--monlib DIR] [options]".format(parser.prog)
-    parser.epilog = "Example: {} --model model.pdb --hklin data.mtz -o refined".format(parser.prog)
-    parser.formatter_class = functools.partial(argparse.RawDescriptionHelpFormatter, max_help_position=34)
-    if hasattr(parser, "_optionals"):
-        parser._optionals.title = "help"
+    utils.cli.setup_parser(parser, "Restrained maximum-likelihood refinement of a crystallographic model against X-ray data "
+                           "(isotropic or anisotropic ADPs, optional TLS), without the refmac5 binary.",
+                           "--hklin FILE --model FILE [--monlib DIR]", "--model model.pdb --hklin data.mtz -o refined")
 
     # (1) required
-    g = parser.add_argument_group("Required arguments")
+    g = parser.add_argument_group(utils.cli.REQUIRED)
     _add(g, "--hklin", required=True, metavar="FILE", show="",
          help="Reflection data: MTZ or mmCIF structure factors, merged or unmerged")
     _add(g, "--model", required=True, metavar="FILE", show="",
          help="Atomic model: PDB or mmCIF (also small-molecule .res/.ins/.cif)")
-    _add(g, "--monlib", metavar="DIR", show="$CLIBD_MON",
-         help="Monomer library: directory with the CCP4 monomer cif dictionaries (required unless the "
-         "environment variable CLIBD_MON is set)")
+    _add(g, "--monlib", metavar="DIR", show="$CLIBD_MON; required if that variable is not set",
+         help="Monomer library: directory with the CCP4 monomer cif dictionaries")
     if after_required:
         after_required(parser)
 
     # (2) optional, with default values
-    g = parser.add_argument_group("Optional arguments with default values")
+    g = parser.add_argument_group(utils.cli.DEFAULTS)
     _add(g, "-s", "--source", choices=["electron", "xray", "neutron", "custom"], default="xray",
          help="Radiation source")
     _add(g, "--labin", metavar="COLUMNS", show="F,SIGF,FreeR_flag if present, otherwise chosen by column type",

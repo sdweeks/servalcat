@@ -210,22 +210,29 @@ class TestParallelHelpers(unittest.TestCase):
         del os.environ["OMP_NUM_THREADS"]
 
     def test_help_layout_and_defaults(self):
-        from servalcat.refine import refine_xtal
-        for mod in (refine_xtal, tls_select):
+        from servalcat.refine import refine_xtal, refine_geom
+        from servalcat.xtal import sigmaa
+        for mod in (refine_xtal, tls_select, sigmaa, refine_geom):
             p = argparse.ArgumentParser(prog="servalcat test")
             mod.add_arguments(p)
             text = p.format_help()
-            self.assertIn("Required arguments:", text)
-            self.assertIn("Optional arguments with default values:", text)
-            self.assertIn("(off unless given):", text)
+            self.assertIn("Required arguments:", text, mod.__name__)
+            self.assertIn("Optional arguments with default values:", text, mod.__name__)
+            self.assertIn("(off unless given):", text, mod.__name__)
+            required = {a.dest for g in p._action_groups if g.title == "Required arguments" for a in g._group_actions}
+            required |= {a.dest for g in p._mutually_exclusive_groups for a in g._group_actions}
+            self.assertIn("model", required)
             for act in p._actions:
-                if act.dest == "help" or act.help == argparse.SUPPRESS:
+                if act.dest == "help" or act.help == argparse.SUPPRESS or act.dest in required:
                     continue
-                # every shown option states its default; required ones are in the required group
-                if not act.required:
-                    self.assertIn("(default:", act.help, act.dest)
-            self.assertIn("(default: xray)", text)
-            self.assertIn("(default: 10)", text) # --ncycle
+                # every other shown option states its default
+                self.assertIn("(default:", act.help, "{} {}".format(mod.__name__, act.dest))
+            self.assertIn("(default: xray)" if mod is not refine_geom else "(default: all)", text)
+        # defaults named in the text are the real ones
+        p = argparse.ArgumentParser(prog="servalcat test")
+        refine_xtal.add_arguments(p)
+        self.assertIn("(default: 10)", p.format_help()) # --ncycle
+        self.assertEqual(p.parse_args(["--hklin", "a", "--model", "b"]).ncycle, 10)
         # tls_select does not list options that it sets itself
         p = argparse.ArgumentParser(prog="servalcat test")
         tls_select.add_arguments(p)
@@ -234,6 +241,12 @@ class TestParallelHelpers(unittest.TestCase):
             self.assertNotIn("  " + o, shown)
         self.assertIn("--max_groups", shown)
         self.assertIn("--seq ", shown)
+        # refine_geom: one of --model / --update_dictionary
+        p = argparse.ArgumentParser(prog="servalcat test")
+        refine_geom.add_arguments(p)
+        with self.assertRaises(SystemExit):
+            p.parse_args([])
+        self.assertEqual(p.parse_args(["--update_dictionary", "x.cif"]).update_dictionary, "x.cif")
 
     def test_n_jobs(self):
         ns = argparse.Namespace

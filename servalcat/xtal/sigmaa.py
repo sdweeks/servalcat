@@ -27,50 +27,61 @@ The last Fc,n is bulk solvent contribution.
 integr = ext.IntensityIntegrator()
 
 def add_arguments(parser):
-    parser.description = 'Sigma-A parameter estimation for crystallographic data'
-    parser.add_argument('--hklin', required=True,
-                        help='Input MTZ file')
-    parser.add_argument('--hklin_free',
-                        help='Input MTZ file for test flags')
-    parser.add_argument('--spacegroup',
-                        help='Override space group')
-    parser.add_argument('--labin',
-                        help='MTZ columns of --hklin for F,SIGF,FREE')
-    parser.add_argument('--labin_free',
-                        help='MTZ column of --hklin_free')
-    parser.add_argument('--free', type=int,
-                        help='flag number for test set')
-    parser.add_argument('--model', required=True,
-                        help='Input atomic model file')
-    parser.add_argument("-d", '--d_min', type=float)
-    parser.add_argument('--d_max', type=float)
-    parser.add_argument('--nbins', type=int,
-                        help="Number of bins for statistics (default: auto)")
-    parser.add_argument('--nbins_ml', type=int,
-                        help="Number of bins for ML parameters (default: auto)")
-    parser.add_argument('-s', '--source', choices=["electron", "xray", "neutron"], default="xray",
-                        help="Scattering factor choice (default: %(default)s)")
-    parser.add_argument("--wavelength", type=float, help="For f_prime")
-    parser.add_argument('--D_trans', choices=["exp", "splus"],
-                        help="estimate D with positivity constraint")
-    parser.add_argument('--S_trans', choices=["exp", "splus"],
-                        help="estimate variance of unexplained signal with positivity constraint")
-    parser.add_argument('--no_solvent',  action='store_true',
-                        help="Do not consider bulk solvent contribution")
-    parser.add_argument('--use_cc',  action='store_true',
-                        help="Use CC(|F1|,|F2|) to CC(F1,F2) conversion to derive D and S")
-    parser.add_argument('--use', choices=["all", "work", "test"], default="all",
-                        help="Which reflections to be used for the parameter estimate.")
-    parser.add_argument('--twin', action="store_true", help="Turn on twin refinement")
-    parser.add_argument('--twin_mlalpha', action="store_true", help="Use ML optimisation for twin fractions")
-    parser.add_argument('--mask',
-                        help="A solvent mask (by default calculated from the coordinates)")
-    parser.add_argument('--keep_charges',  action='store_true',
-                        help="Use scattering factor for charged atoms. Use it with care.")
-    parser.add_argument("--prefer_intensity", action='store_true')
-    parser.add_argument("--prefer_anomalous", action='store_true')
-    parser.add_argument('-o','--output_prefix', default="sigmaa",
-                        help='output file name prefix (default: %(default)s)')
+    add = utils.cli.add_arg
+    utils.cli.setup_parser(parser, "Sigma-A parameter estimation and map calculation (2Fo-Fc, Fo-Fc) from a model and "
+                           "crystallographic data.",
+                           "--hklin FILE --model FILE", "--model model.pdb --hklin data.mtz -o sigmaa")
+
+    g = parser.add_argument_group(utils.cli.REQUIRED)
+    add(g, "--hklin", required=True, metavar="FILE", show="",
+        help="Reflection data: MTZ or mmCIF structure factors, merged or unmerged")
+    add(g, "--model", required=True, metavar="FILE", show="",
+        help="Atomic model: PDB or mmCIF")
+
+    g = parser.add_argument_group(utils.cli.DEFAULTS)
+    add(g, "-s", "--source", choices=["electron", "xray", "neutron"], default="xray",
+        help="Scattering factor choice")
+    add(g, "--labin", metavar="COLUMNS", show="F,SIGF,FreeR_flag if present, otherwise chosen by column type",
+        help="MTZ columns of observations, sigmas and test flags, e.g. FP,SIGFP,FreeR_flag or I,SIGI,FreeR_flag")
+    add(g, "--free", type=int, metavar="N", show="guessed from the flags",
+        help="Value of the test-set flag")
+    add(g, "-d", "--d_min", type=float, metavar="A", show="all data",
+        help="High-resolution limit in Angstrom")
+    add(g, "--d_max", type=float, metavar="A", show="all data",
+        help="Low-resolution limit in Angstrom")
+    add(g, "--nbins", type=int, metavar="N", show="auto",
+        help="Number of resolution bins for statistics")
+    add(g, "--nbins_ml", type=int, metavar="N", show="auto",
+        help="Number of resolution bins for ML parameters")
+    add(g, "--use", choices=["all", "work", "test"], default="all",
+        help="Reflections used to estimate the parameters")
+    add(g, "-o", "--output_prefix", default="sigmaa", metavar="PREFIX",
+        help="Prefix of the output files")
+
+    g = parser.add_argument_group("Estimation options (off unless given)")
+    add(g, "--twin", action="store_true", help="Twinned data")
+    add(g, "--twin_mlalpha", action="store_true", help="Optimise the twin fractions by ML")
+    add(g, "--no_solvent", action="store_true", help="No bulk-solvent contribution")
+    add(g, "--D_trans", choices=["exp", "splus"], show="none: no transformation",
+        help="Transformation that keeps the estimated D positive")
+    add(g, "--S_trans", choices=["exp", "splus"], show="none: no transformation",
+        help="Transformation that keeps the estimated variance of the unexplained signal positive")
+    add(g, "--use_cc", action="store_true",
+        help="Use the CC(|F1|,|F2|) to CC(F1,F2) conversion to derive D and S")
+
+    g = parser.add_argument_group("Additional inputs (off unless given)")
+    add(g, "--mask", metavar="FILE", show="calculated from the coordinates", help="Solvent mask")
+    add(g, "--hklin_free", metavar="FILE", show="the flags are taken from --hklin",
+        help="MTZ file with the test-set flags")
+    add(g, "--labin_free", metavar="COLUMN", show="auto", help="Column of the flags in --hklin_free")
+    add(g, "--spacegroup", metavar="NAME", show="from the data and the model", help="Override the space group")
+    add(g, "--wavelength", type=float, metavar="A", show="from the data file if present",
+        help="Wavelength for anomalous scattering factors f', f'' (X-ray); 0: ignore the wavelength in the file")
+
+    g = parser.add_argument_group("Advanced options (off unless given)")
+    add(g, "--prefer_intensity", action="store_true", help="When choosing the columns automatically, prefer intensities")
+    add(g, "--prefer_anomalous", action="store_true", help="When choosing the columns automatically, prefer Friedel pairs")
+    add(g, "--keep_charges", action="store_true", help="Use scattering factors of charged atoms (use with care)")
 # add_arguments()
 
 def parse_args(arg_list):

@@ -253,7 +253,7 @@ Servalcat provides a helper command which converts files between the small molec
 Complete list of options
 ------------------------
 
-The options are listed in groups: required arguments; optional arguments with default values (the default is stated for each); and optional features that are off unless given (refinement options, TLS, sequence annotation, additional inputs, advanced options). The same layout is used by ``util tls_select``.
+The options are listed in groups: required arguments; optional arguments with default values (the default is stated for each); and optional features that are off unless given (refinement options, TLS, sequence annotation, additional inputs, advanced options). The same layout is used by ``util tls_select``, ``sigmaa`` and ``refine_geom``.
 
 .. code-block:: console
 
