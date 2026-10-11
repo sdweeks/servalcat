@@ -406,10 +406,16 @@ This fork is installed from source (a compiled C++ extension is built, with GEMM
 ### Install
 
 ```shell
-git clone --recurse-submodules https://github.com/sdweeks/servalcat.git
+git clone --recurse-submodules --branch claude/relaxed-ramanujan-e4ko9y https://github.com/sdweeks/servalcat.git
 cd servalcat
+pip uninstall servalcat    # only if upstream Servalcat is installed (same package name)
 pip install .
 ```
+
+`--branch claude/relaxed-ramanujan-e4ko9y` selects the branch that contains the features described above; the `main`
+branch of this repository is still identical to upstream. (Once the branch has been merged into `main`, leave the
+option out.) If you already cloned the repository: `git fetch origin && git checkout claude/relaxed-ramanujan-e4ko9y`
+and `git submodule update --init`.
 
 `--recurse-submodules` fetches Eigen into `eigen/` (from <https://gitlab.com/libeigen/eigen.git>). If you cloned
 without it, run `git submodule update --init`, or install Eigen 3.4 with your package manager instead — then
@@ -417,11 +423,12 @@ CMake finds it by itself (`sudo apt install libeigen3-dev`, `brew install eigen`
 package is what was used for testing). Use a virtual environment or conda environment if you do not want to
 install into the system Python. The build takes several minutes.
 
-Check the installation:
+Check the installation (`tls_select` exists only in this fork, so it shows that the right version is installed):
 
 ```shell
 servalcat -v
 servalcat refine_xtal -h
+servalcat util tls_select -h
 ```
 
 ### Monomer library
