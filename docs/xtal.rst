@@ -164,7 +164,7 @@ Input columns for diffraction data
 ----------------------------------
 
 In the required ``--hklin`` option, it is possible to provide merged or unmerged diffraction data (MTZ or CIF format).
-If there are multiple columns available in the input file, mean amplitudes (Friedel pairs averaged) are used by default.
+If there are multiple columns available in the input file, mean amplitudes (Friedel pairs averaged) are used by default. Columns named ``F``, ``SIGF`` and ``FreeR_flag`` are preferred when present; otherwise the first suitable columns are chosen by column type.
 
 To specify which columns to use, use the ``--labin`` option. For example, the file ``data_merged.mtz`` contains the following columns with **merged** diffraction data:
 

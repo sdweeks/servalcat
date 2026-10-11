@@ -1358,6 +1358,9 @@ def calculate_maps_twin(hkldata, b_aniso, fc_labs, D_labs, twin_data, use="all")
                 hkldata.binned_df["ml"].loc[i_bin, lab] = numpy.nanmean(m)
 # calculate_maps_twin()
 
+DEFAULT_LABIN_F = ["F", "SIGF"]
+DEFAULT_LABIN_FREE = "FreeR_flag"
+
 def decide_mtz_labels(mtz, find_free=True, require=None, prefer_intensity=False,
                       prefer_anomalous=False):
     """
@@ -1389,13 +1392,18 @@ def decide_mtz_labels(mtz, find_free=True, require=None, prefer_intensity=False,
     for typ in require:
         if dlabs[typ]:
             labin = dlabs[typ][0]
+            # preferred default names (F, SIGF) win over other amplitude columns
+            if typ == "F" and DEFAULT_LABIN_F in dlabs[typ]:
+                labin = DEFAULT_LABIN_F
             break
     else:
         raise RuntimeError(f"Error: Observation or sigma not found in MTZ")
+    labin = list(labin)
     if find_free:
         flabs = utils.hkl.mtz_find_free_columns(mtz)
         if flabs:
-            labin += [flabs[0]]
+            # preferred default name (FreeR_flag) wins over other test-flag columns
+            labin += [DEFAULT_LABIN_FREE if DEFAULT_LABIN_FREE in flabs else flabs[0]]
     logger.writeln("MTZ columns automatically selected: {}".format(labin))
     return labin
 # decide_mtz_labels()
