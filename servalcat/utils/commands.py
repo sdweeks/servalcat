@@ -25,19 +25,19 @@ import re
 import argparse
 
 def add_arguments(p):
-    subparsers = p.add_subparsers(dest="subcommand")
+    subparsers = p.add_subparsers(dest="subcommand", title="subcommands", metavar="<subcommand>")
 
     # show
-    parser = subparsers.add_parser("show", description = 'Show file info supported by the program')
+    parser = subparsers.add_parser("show", help='Show file info supported by the program', description='Show file info supported by the program')
     parser.add_argument('files', nargs='+')
 
     # json2csv
-    parser = subparsers.add_parser("json2csv", description = 'Convert json to csv for plotting')
+    parser = subparsers.add_parser("json2csv", help='Convert json to csv for plotting', description='Convert json to csv for plotting')
     parser.add_argument('json')
     parser.add_argument('-o', '--output_prefix')
 
     # h_add
-    parser = subparsers.add_parser("h_add", description = 'Add hydrogen in riding position')
+    parser = subparsers.add_parser("h_add", help='Add hydrogen in riding position', description='Add hydrogen in riding position')
     parser.add_argument('model')
     parser.add_argument('--ligand', nargs="*", action="append")
     parser.add_argument("--monlib",
@@ -47,7 +47,7 @@ def add_arguments(p):
     parser.add_argument('--map', help="Expects hydrogen-omit normalised Fo-Fc map")
 
     # add_op3
-    parser = subparsers.add_parser("add_op3", description = "Add OP3 atoms to 5' ends")
+    parser = subparsers.add_parser("add_op3", help="Add OP3 atoms to 5' ends", description="Add OP3 atoms to 5' ends")
     parser.add_argument('model')
     parser.add_argument('--chains', nargs="*", action="append", help="For selected chains only")
     parser.add_argument('--ligand', nargs="*", action="append")
@@ -56,7 +56,7 @@ def add_arguments(p):
     parser.add_argument('-o','--output_prefix')
 
     # map_peaks
-    parser = subparsers.add_parser("map_peaks", description = 'List density peaks and write a coot script')
+    parser = subparsers.add_parser("map_peaks", help='List density peaks and write a coot script', description='List density peaks and write a coot script')
     parser.add_argument('--model', required=True, help="Model")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--map', help="Map file")
@@ -73,7 +73,7 @@ def add_arguments(p):
     parser.add_argument('-o','--output_prefix', default="peaks")
     
     # h_density
-    parser = subparsers.add_parser("h_density", description = 'Hydrogen density analysis')
+    parser = subparsers.add_parser("h_density", help='Hydrogen density analysis', description='Hydrogen density analysis')
     parser.add_argument('--model', required=True, help="Model with hydrogen atoms")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--map', help="Fo-Fc map file")
@@ -92,7 +92,7 @@ def add_arguments(p):
     parser.add_argument('-o','--output_prefix')
 
     # fix_link
-    parser = subparsers.add_parser("fix_link", description = 'Fix LINKR/_struct_conn records in the model')
+    parser = subparsers.add_parser("fix_link", help='Fix LINKR/_struct_conn records in the model', description='Fix LINKR/_struct_conn records in the model')
     parser.add_argument('model')
     parser.add_argument('--ligand', nargs="*", action="append")
     parser.add_argument("--monlib",
@@ -102,17 +102,17 @@ def add_arguments(p):
     parser.add_argument('-o','--output_prefix', help="Default: input_fixlink.{pdb|mmcif}")
 
     # merge_models
-    parser = subparsers.add_parser("merge_models", description = 'Merge multiple model files')
+    parser = subparsers.add_parser("merge_models", help='Merge multiple model files', description='Merge multiple model files')
     parser.add_argument('models', nargs="+")
     parser.add_argument('-o','--output', required=True)
 
     # merge_dicts
-    parser = subparsers.add_parser("merge_dicts", description = 'Merge restraint dictionary cif files')
+    parser = subparsers.add_parser("merge_dicts", help='Merge restraint dictionary cif files', description='Merge restraint dictionary cif files')
     parser.add_argument('cifs', nargs="+")
     parser.add_argument('-o','--output', default="merged.cif", help="Output cif file (default: %(default)s)")
 
     # geom
-    parser = subparsers.add_parser("geom", description = 'Calculate geometry and show outliers')
+    parser = subparsers.add_parser("geom", help='Calculate geometry and show outliers', description='Calculate geometry and show outliers')
     parser.add_argument('model')
     parser.add_argument('--ligand', nargs="*", action="append")
     parser.add_argument("--monlib",
@@ -136,7 +136,7 @@ def add_arguments(p):
                         help="default: taken from input file")
 
     # conf
-    parser = subparsers.add_parser("conf", description = 'Compare conformations')
+    parser = subparsers.add_parser("conf", help='Compare conformations', description='Compare conformations')
     parser.add_argument('models', nargs="+")
     parser.add_argument("--min_diff", type=float, default=60.)
     parser.add_argument('--ligand', nargs="*", action="append")
@@ -147,13 +147,13 @@ def add_arguments(p):
                         help="")
 
     # adp
-    parser = subparsers.add_parser("adp", description = 'ADP analysis')
+    parser = subparsers.add_parser("adp", help='ADP analysis', description='ADP analysis')
     parser.add_argument('model')
     parser.add_argument('-o', '--output_prefix',
                         help="default: taken from input file")
     
     # fcalc
-    parser = subparsers.add_parser("fcalc", description = 'Structure factor from model')
+    parser = subparsers.add_parser("fcalc", help='Structure factor from model', description='Structure factor from model')
     parser.add_argument('--model', required=True)
     parser.add_argument("--no_expand_ncs", action='store_true', help="Do not expand strict NCS in MTRIX or _struct_ncs_oper")
     parser.add_argument("--method", choices=["fft", "direct"], default="fft")
@@ -174,29 +174,29 @@ def add_arguments(p):
     parser.add_argument('-o', '--output_prefix')
 
     # blur
-    parser = subparsers.add_parser("blur", description = 'Blur data by specified B value')
+    parser = subparsers.add_parser("blur", help='Blur data by specified B value', description='Blur data by specified B value')
     parser.add_argument('--hklin', required=True, help="input MTZ file")
     parser.add_argument('-B', type=float, required=True, help="B value for blurring (negative value for sharpening)")
     parser.add_argument('-o', '--output_prefix')
 
     # tls_select
     from servalcat.refine import tls_select
-    parser = subparsers.add_parser("tls_select", description = 'Automated selection of TLS groups')
+    parser = subparsers.add_parser("tls_select", help='Automated selection of TLS groups', description='Automated selection of TLS groups')
     tls_select.add_arguments(parser)
 
     # sm2mm
-    parser = subparsers.add_parser("sm2mm", description = 'Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)')
+    parser = subparsers.add_parser("sm2mm", help='Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)', description='Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)')
     parser.add_argument('files', nargs='+', help='Cif/ins/res/hkl files')
     parser.add_argument('-o', '--output_prefix')
 
     # mm2ins
-    parser = subparsers.add_parser("mm2ins", description = 'convert pdb/mmcif to ins for shelxl/olex2')
+    parser = subparsers.add_parser("mm2ins", help='convert pdb/mmcif to ins for shelxl/olex2', description='convert pdb/mmcif to ins for shelxl/olex2')
     parser.add_argument('model')
     parser.add_argument('--hklin')
     parser.add_argument('-o', '--output')
 
     # seq
-    parser = subparsers.add_parser("seq", description = 'Print/align model sequence')
+    parser = subparsers.add_parser("seq", help='Print/align model sequence', description='Print/align model sequence')
     parser.add_argument("--model", required=True)
     parser.add_argument('--seq', nargs="*", action="append", help="Sequence file(s)")
     parser.add_argument('--scoring', nargs=6, type=int, default=(1, 0, -1, -1, 0, -1),
@@ -204,7 +204,7 @@ def add_arguments(p):
                         help="scoring function. default: %(default)s")
 
     # dnarna
-    parser = subparsers.add_parser("dnarna", description = 'DNA to RNA or RNA to DNA model conversion')
+    parser = subparsers.add_parser("dnarna", help='DNA to RNA or RNA to DNA model conversion', description='DNA to RNA or RNA to DNA model conversion')
     parser.add_argument("model")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--to_dna', action='store_true', help="To DNA")
@@ -213,7 +213,7 @@ def add_arguments(p):
     parser.add_argument('-o', '--output')
 
     # exte
-    parser = subparsers.add_parser("exte", description = 'Create restraints using external structures (experimental)')
+    parser = subparsers.add_parser("exte", help='Create restraints using external structures (experimental)', description='Create restraints using external structures (experimental)')
     parser.add_argument('model')
     parser.add_argument("--reference", required=True)
     parser.add_argument('-o', '--output', default="exte.txt")

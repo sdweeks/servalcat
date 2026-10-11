@@ -54,22 +54,30 @@ def test_installation():
 
 def main():
     parser = argparse.ArgumentParser(prog="servalcat",
-                                     description="A tool for model refinement and map calculation for X-ray crystallography.")
+                                     description="X-ray crystallographic structure refinement (restrained ML refinement "
+                                     "with optional TLS), map calculation and utilities.")
     parser.add_argument("--skip_test", action="store_true", help="Skip installation test")
     parser.add_argument("-v", "--version", action="store_true")
     parser.add_argument("--logfile")
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="command", title="commands", metavar="<command>")
 
-    modules = dict(sigmaa=servalcat.xtal.sigmaa,
-                   fw=servalcat.xtal.french_wilson,
-                   util=servalcat.utils.commands,
+    modules = dict(refine_xtal=servalcat.refine.refine_xtal,
                    refine_geom=servalcat.refine.refine_geom,
-                   refine_xtal=servalcat.refine.refine_xtal,
-                   )
+                   sigmaa=servalcat.xtal.sigmaa,
+                   fw=servalcat.xtal.french_wilson,
+                   util=servalcat.utils.commands)
     aliases = dict(refine_xtal_norefmac="refine_xtal") # backward compatibility
 
+    summaries = dict(refine_xtal="Restrained ML refinement against X-ray data (XYZ, ADP, occupancy, optional TLS)",
+                     refine_geom="Geometry-only optimisation of a model or a ligand dictionary",
+                     sigmaa="sigmaA parameter estimation and map calculation (2Fo-Fc, Fo-Fc)",
+                     fw="French-Wilson conversion of intensities to amplitudes",
+                     util="Utilities: TLS group selection, geometry/ADP analysis, model and file tools")
     for n in modules:
-        p = subparsers.add_parser(n, aliases=[a for a, t in aliases.items() if t == n])
+        p = subparsers.add_parser(n, help=summaries.get(n), description=summaries.get(n))
+        for a, t in aliases.items(): # registered without showing up in -h
+            if t == n:
+                subparsers._name_parser_map[a] = p
         modules[n].add_arguments(p)
 
     args = parser.parse_args()

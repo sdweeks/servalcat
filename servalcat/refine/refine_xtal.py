@@ -24,17 +24,19 @@ from servalcat import ext
 b_to_u = utils.model.b_to_u
 
 def add_arguments(parser):
-    parser.description = "program to refine crystallographic structures"
-    parser.add_argument("--hklin", required=True)
+    parser.description = "Restrained maximum-likelihood refinement of a crystallographic model against X-ray data " \
+        "(isotropic or anisotropic ADPs, optional TLS), without the refmac5 binary"
+    parser.add_argument("--hklin", required=True, help="Input reflection file (MTZ or mmCIF; merged or unmerged)")
     parser.add_argument('--hklin_free',
                         help='Input MTZ file for test flags')
-    parser.add_argument("-d", '--d_min', type=float)
-    parser.add_argument('--d_max', type=float)
+    parser.add_argument("-d", '--d_min', type=float, help="High-resolution cutoff (Angstrom)")
+    parser.add_argument('--d_max', type=float, help="Low-resolution cutoff (Angstrom)")
     parser.add_argument('--nbins', type=int,
                         help="Number of bins for statistics (default: auto)")
     parser.add_argument('--nbins_ml', type=int,
                         help="Number of bins for ML parameters (default: auto)")
-    parser.add_argument("--labin", help="F,SIGF,FREE input")
+    parser.add_argument("--labin", help="Input columns, e.g. F,SIGF,FreeR_flag or I,SIGI,FreeR_flag. Default: F,SIGF,FreeR_flag if present, "
+                        "otherwise selected automatically by column type")
     parser.add_argument('--labin_free',
                         help='MTZ column of --hklin_free')
     parser.add_argument('--labin_llweight',
@@ -86,14 +88,17 @@ def add_arguments(parser):
                         help='Scale target by (1 + ALPHA * z^2). Only applies to bond, angle, plane, torsion, and vdw.')
     parser.add_argument('--bfactor', type=float,
                         help="reset all atomic B values to specified value")
-    parser.add_argument('--fix_xyz', action="store_true")
-    parser.add_argument('--adp',  choices=["fix", "iso", "aniso"], default="iso")
-    parser.add_argument('--refine_all_occ', action="store_true")
-    parser.add_argument('--max_dist_for_adp_restraint', type=float, default=4.)
-    parser.add_argument('--adp_restraint_power', type=float)
-    parser.add_argument('--adp_restraint_exp_fac', type=float)
-    parser.add_argument('--adp_restraint_no_long_range', action='store_true')
-    parser.add_argument('--adp_restraint_mode', choices=["diff", "kldiv"], default="kldiv")
+    parser.add_argument('--fix_xyz', action="store_true", help="Do not refine coordinates")
+    parser.add_argument('--adp',  choices=["fix", "iso", "aniso"], default="iso",
+                        help="ADP model (default: %(default)s). With --tls the residual B stays isotropic")
+    parser.add_argument('--refine_all_occ', action="store_true", help="Refine all occupancies (see docs/occ_refine.rst)")
+    parser.add_argument('--max_dist_for_adp_restraint', type=float, default=4.,
+                        help="Maximum distance for ADP restraints (default: %(default)s)")
+    parser.add_argument('--adp_restraint_power', type=float, help="Power of the distance dependence of ADP restraint weights")
+    parser.add_argument('--adp_restraint_exp_fac', type=float, help="Exponential factor of the distance dependence of ADP restraint weights")
+    parser.add_argument('--adp_restraint_no_long_range', action='store_true', help="Restrain ADPs of bonded and 1-3 neighbours only")
+    parser.add_argument('--adp_restraint_mode', choices=["diff", "kldiv"], default="kldiv",
+                        help="ADP restraint type (default: %(default)s)")
     parser.add_argument('--unrestrained',  action='store_true', help="No positional restraints")
     parser.add_argument('--refine_h', action="store_true", help="Refine hydrogen (default: restraints only)")
     parser.add_argument('--tls', action="store_true",
@@ -109,7 +114,8 @@ def add_arguments(parser):
     parser.add_argument('--refine_dfrac', action="store_true", help="Refine deuterium fraction (neutron only)")
     parser.add_argument('--twin', action="store_true", help="Turn on twin refinement")
     parser.add_argument('--twin_mlalpha', action="store_true", help="Use ML optimisation for twin fractions")
-    parser.add_argument("-s", "--source", choices=["electron", "xray", "neutron", "custom"], required=True)
+    parser.add_argument("-s", "--source", choices=["electron", "xray", "neutron", "custom"], required=True,
+                        help="Radiation source; use xray for X-ray data")
     parser.add_argument("--wavelength", type=float, help="For f_prime")
     parser.add_argument('--no_solvent',  action='store_true',
                         help="Do not consider bulk solvent contribution")
@@ -122,13 +128,13 @@ def add_arguments(parser):
     parser.add_argument("--keep_entities", action='store_true',
                         help="Do not override entities")
     parser.add_argument('--allow_unusual_occupancies', action="store_true", help="Allow negative or more than one occupancies")
-    parser.add_argument('-o','--output_prefix')
+    parser.add_argument('-o','--output_prefix', help="Prefix of output files (default: derived from the model name)")
     parser.add_argument("--write_trajectory", action='store_true',
                         help="Write all output from cycles")
     parser.add_argument("--vonmises", action='store_true',
                         help="Experimental: von Mises type restraint for angles")
-    parser.add_argument("--prefer_intensity", action='store_true')
-    parser.add_argument("--prefer_anomalous", action='store_true')
+    parser.add_argument("--prefer_intensity", action='store_true', help="When columns are selected automatically, prefer intensities over amplitudes")
+    parser.add_argument("--prefer_anomalous", action='store_true', help="When columns are selected automatically, prefer Friedel-pair columns")
     parser.add_argument("--use_fw", action='store_true',
                         help="For debugging purpose; use F&W-converted amplitudes but use intensity for stats")
     parser.add_argument('--robust_function', help=argparse.SUPPRESS) # testing
