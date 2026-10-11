@@ -2,14 +2,35 @@ Occupancy refinement
 ====================
 
 .. warning::
-   **Experimental Feature:** Occupancy refinement in Servalcat is currently 
-   experimental. The underlying algorithms, YAML syntax, and default behaviours 
+   **Experimental Feature:** Occupancy refinement in Servalcat is currently
+   experimental. The underlying algorithms, YAML syntax, and default behaviours
    are subject to change in future releases.
 
-   Currently, this requires low-level manual control via the configuration file. 
-   Once stable recommendations and workflows are established, this process will 
-   be automated so that users do not have to write these complex YAML files directly. 
-   Use with caution.
+Automatic setup
+---------------
+
+For alternative conformations and partially occupied atoms the configuration below does not have to be written by hand.
+``refine_xtal --refine_occ`` scans the input model and generates it::
+
+   servalcat refine_xtal --model model.pdb --hklin data.mtz --refine_occ --ncycle 30 -o refined
+
+* every altloc of a residue is an occupancy group and the conformers of a residue are constrained to add up to 1
+  (``complete: true``); a residue with only one altloc, the partially occupied atoms of a residue (occupancy below 1,
+  no altloc) and waters are single groups constrained to at most 1 (``complete: false``). ``--occ_waters`` selects the
+  waters: ``partial`` (default; occupancy below 1), ``all`` or ``none``;
+* the atoms with refined occupancy get stronger ADP restraints (``local_adpr_weights``, ``--occ_adpr_weight``, default 5);
+* the non-binary solvent mask is used;
+* the generated configuration is shown in the log and written to ``PREFIX_occ.yaml``. It can be edited (for example to link the
+  conformers of neighbouring residues) and used with ``--config``. ``servalcat util occ_groups --model model.pdb``
+  writes the same file without refining.
+
+Only occupancies below 1 in the input model are detected. ``--refine_occ`` cannot be combined with ``occ_groups`` that are
+defined in the configuration file or by keywords.
+
+The rules follow the occupancy keywords of REFMAC5.
+
+Manual configuration
+--------------------
 
 Servalcat supports multiple occupancy refinement scenarios, including refining 
 individual atom occupancies, grouped occupancies, and group-constrained occupancies. 

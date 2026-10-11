@@ -562,18 +562,24 @@ struct RefineParams {
     for (int cyc = 0; cyc < 10; ++cyc) {
       Eigen::VectorXd der1 = Eigen::VectorXd::Zero(occ_groups.size());
       Eigen::MatrixXd der2 = Eigen::MatrixXd::Zero(occ_groups.size(), occ_groups.size());
-      for (auto gr : occ_group_constraints) {
-        const double tmp = std::accumulate(gr.second.begin(), gr.second.end(), -1.0,
-                                           [&](double a, size_t i) { return a + get_occ(i);});
+      std::vector<bool> involved(occ_groups.size(), false);
+      for (const auto &gr : occ_group_constraints) {
+        const double sum_occ = std::accumulate(gr.second.begin(), gr.second.end(), 0.0,
+                                               [&](double a, size_t i) { return a + get_occ(i);});
+        // an incomplete constraint (sum <= 1) that is satisfied must be left alone;
+        // otherwise e.g. a lone conformer is pushed to 1 when some other constraint is violated
+        if (!gr.first && sum_occ <= 1)
+          continue;
         for (size_t i : gr.second) {
-          der1(i) += tmp;
+          der1(i) += sum_occ - 1;
+          involved[i] = true;
           for (size_t j : gr.second)
             der2(i, j) += 1;
         }
       }
       Eigen::VectorXd shift = -SymMatEig(der2).inv() * der1;
-      for (auto gr : occ_group_constraints)
-        for (size_t j : gr.second)
+      for (size_t j = 0; j < occ_groups.size(); ++j)
+        if (involved[j])
           for (int ia : occ_groups[j])
             atoms[ia]->occ = gemmi::clamp(atoms[ia]->occ + shift(j), 0.01, 1.);
       if (is_good())

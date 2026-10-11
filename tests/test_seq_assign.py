@@ -173,6 +173,14 @@ class TestRefineWithSeq(unittest.TestCase):
         self.assertRegex(log, r"A\s+protein\s+construct\s+156")
         self.assertRegex(log, r"A/{}\s+model\s+\w+\s+sequence\s+\w+\s+\(construct\)".format(pos))
         self.assertIn("differ from the assigned sequence (1)", log)
+        # the summary at the end of the run repeats the sequence alignment and shows the progress of the refinement
+        tail = log[log.index("Refinement summary"):]
+        self.assertIn("= ADP analysis =", tail)
+        self.assertIn("Sequence alignment (--seq)", tail)
+        self.assertIn("A/{}".format(pos), tail)
+        for name in ("R-work", "R-free", "zBond", "zAngle"):
+            self.assertIn(name, tail)
+        self.assertNotIn("\x1b", log)
         out = gemmi.read_structure("sq.pdb")
         out.setup_entities()
         self.assertEqual(len(out.entities[0].full_sequence), 156) # SEQRES now has the tag and the unmodelled ends

@@ -271,8 +271,8 @@ The options are listed in groups: required arguments; optional arguments with de
                                       unmerged
       --model FILE                    Atomic model: PDB or mmCIF (also small-molecule .res/.ins/.cif)
       --monlib DIR                    Monomer library: directory with the CCP4 monomer cif
-                                      dictionaries (required unless the environment variable CLIBD_MON
-                                      is set) (default: $CLIBD_MON)
+                                      dictionaries (default: $CLIBD_MON; required if that variable is
+                                      not set)
 
     Optional arguments with default values:
       -s, --source {electron,xray,neutron,custom}
@@ -309,6 +309,11 @@ The options are listed in groups: required arguments; optional arguments with de
                                       restraint weights (default: 0.011271)
       --jellybody_params SIGMA DMAX   Sigma and maximum distance of the jelly-body restraints, used
                                       with --jellybody (default: [0.01, 4.2])
+      --occ_waters {none,partial,all}
+                                      Waters whose occupancy is refined with --refine_occ: none;
+                                      partial: waters with occupancy below 1; all (default: partial)
+      --occ_adpr_weight W             Weight of the ADP restraints around the atoms with refined
+                                      occupancy, with --refine_occ (0: no extra weight) (default: 5.0)
       --tls_ncycle N                  Number of TLS steps in each refinement cycle, used with --tls
                                       (default: 1)
       --seq_min_identity X            Fraction of the modelled residues that must agree with a
@@ -319,7 +324,12 @@ The options are listed in groups: required arguments; optional arguments with de
 
     Refinement options (off unless given):
       --fix_xyz                       Do not refine the coordinates (default: off)
-      --refine_all_occ                Refine all occupancies (see docs/occ_refine.rst) (default: off)
+      --refine_occ                    Refine the occupancies of alternative conformations and
+                                      partially occupied atoms: the occupancy groups and constraints
+                                      are generated from the input model (written to PREFIX_occ.yaml;
+                                      see docs/occ_refine.rst) (default: off)
+      --refine_all_occ                Refine the occupancy of every atom individually (not grouped;
+                                      usually unstable) (default: off)
       --refine_h                      Refine hydrogen positions (otherwise restraints only) (default:
                                       off)
       --refine_dfrac                  Refine the deuterium fraction (neutron data only) (default: off)
@@ -410,8 +420,8 @@ The options are listed in groups: required arguments; optional arguments with de
                                       unmerged
       --model FILE                    Atomic model: PDB or mmCIF (also small-molecule .res/.ins/.cif)
       --monlib DIR                    Monomer library: directory with the CCP4 monomer cif
-                                      dictionaries (required unless the environment variable CLIBD_MON
-                                      is set) (default: $CLIBD_MON)
+                                      dictionaries (default: $CLIBD_MON; required if that variable is
+                                      not set)
 
     TLS selection: optional arguments with default values:
       --max_groups N                  Largest number of groups per chain in the scan (default: 8)
@@ -471,7 +481,8 @@ The options are listed in groups: required arguments; optional arguments with de
       -o, --output_prefix PREFIX      Prefix of the output files (default: <model name>_refined)
 
     Refinement options (off unless given):
-      --refine_all_occ                Refine all occupancies (see docs/occ_refine.rst) (default: off)
+      --refine_all_occ                Refine the occupancy of every atom individually (not grouped;
+                                      usually unstable) (default: off)
       --refine_h                      Refine hydrogen positions (otherwise restraints only) (default:
                                       off)
       --refine_dfrac                  Refine the deuterium fraction (neutron data only) (default: off)

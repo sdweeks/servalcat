@@ -10,6 +10,7 @@ import gemmi
 import numpy
 import pandas
 import os
+import time
 import shutil
 import argparse
 import types
@@ -19,6 +20,8 @@ from servalcat.xtal.sigmaa import decide_mtz_labels, process_input
 from servalcat.refine.xtal import LL_Xtal
 from servalcat.refine.refine import Geom, Refine, RefineParams, update_meta, print_h_options, load_config
 from servalcat.refine import tls as tls_mod
+from servalcat.refine import occ_groups
+from servalcat.refine import summary
 from servalcat.refmac import refmac_keywords
 from servalcat import ext
 b_to_u = utils.model.b_to_u
@@ -87,6 +90,10 @@ def add_arguments(parser, after_required=None):
          help="Factor in the exponent of the distance dependence of the ADP restraint weights")
     _add(g, "--jellybody_params", nargs=2, type=float, metavar=("SIGMA", "DMAX"), default=[0.01, 4.2],
          help="Sigma and maximum distance of the jelly-body restraints, used with --jellybody")
+    _add(g, "--occ_waters", choices=["none", "partial", "all"], default="partial",
+         help="Waters whose occupancy is refined with --refine_occ: none; partial: waters with occupancy below 1; all")
+    _add(g, "--occ_adpr_weight", type=float, default=5., metavar="W",
+         help="Weight of the ADP restraints around the atoms with refined occupancy, with --refine_occ (0: no extra weight)")
     _add(g, "--tls_ncycle", type=int, metavar="N", show="1",
          help="Number of TLS steps in each refinement cycle, used with --tls")
     _add(g, "--seq_min_identity", type=float, default=0.8, metavar="X",
@@ -100,7 +107,11 @@ def add_arguments(parser, after_required=None):
     # (3) optional features, off unless given
     g = parser.add_argument_group("Refinement options (off unless given)")
     _add(g, "--fix_xyz", action="store_true", help="Do not refine the coordinates")
-    _add(g, "--refine_all_occ", action="store_true", help="Refine all occupancies (see docs/occ_refine.rst)")
+    _add(g, "--refine_occ", action="store_true",
+         help="Refine the occupancies of alternative conformations and partially occupied atoms: the occupancy groups "
+         "and constraints are generated from the input model (written to PREFIX_occ.yaml; see docs/occ_refine.rst)")
+    _add(g, "--refine_all_occ", action="store_true",
+         help="Refine the occupancy of every atom individually (not grouped; usually unstable)")
     _add(g, "--refine_h", action="store_true", help="Refine hydrogen positions (otherwise restraints only)")
     _add(g, "--refine_dfrac", action="store_true", help="Refine the deuterium fraction (neutron data only)")
     _add(g, "--twin", action="store_true", help="Twin refinement")
@@ -332,7 +343,25 @@ def setup(args, use_tls=True):
     # initialize values
     utils.model.reset_adp(st[0], args.bfactor, args.adp)
     utils.model.initialize_values(st[0], refine_cfg.initialisation)
-        
+
+    # occupancy groups from the alternative conformations and partial occupancies of the input model
+    occ_result = None
+    if args.refine_occ:
+        occ_result = occ_groups.find_occupancy_groups(st, waters=args.occ_waters)
+        occ_groups.log_summary(occ_result)
+        if occ_result.groups:
+            occ_groups.apply_to_config(refine_cfg, occ_result, args.occ_adpr_weight)
+            occ_yaml = args.output_prefix + "_occ.yaml"
+            occ_groups.write_yaml(occ_yaml, occ_result, args.occ_adpr_weight)
+            logger.writeln("Occupancy groups written to {} (can be edited and used with --config)".format(occ_yaml))
+            if not args.no_solvent and not args.non_binary_solvent_mask:
+                logger.writeln("NOTE: using the non-binary solvent mask, as advised when refining occupancies")
+                args.non_binary_solvent_mask = True
+            if args.ncycle < 30:
+                logger.writeln("NOTE: group occupancies usually need 30 cycles or more to converge; --ncycle is {}".format(args.ncycle))
+        else:
+            logger.writeln("No alternative conformations or partially occupied atoms found: no occupancy refinement")
+
     # auto weight
     if args.weight is None:
         logger.writeln("Estimating weight using resolution")
@@ -402,10 +431,12 @@ def setup(args, use_tls=True):
                      unrestrained=args.unrestrained, tls=tls)
     return types.SimpleNamespace(refiner=refiner, refine_cfg=refine_cfg, software_items=software_items,
                                  ll=ll, st=st, hkldata=hkldata, is_int=is_int, tls=tls, geom=geom,
-                                 refine_params=refine_params, monlib=monlib, use_in_target=use_in_target)
+                                 refine_params=refine_params, monlib=monlib, use_in_target=use_in_target,
+                                 seq_report=seq_report, occ_result=occ_result)
 # setup()
 
 def main(args):
+    t_start = time.time()
     ctx = setup(args)
     refiner, refine_cfg, software_items = ctx.refiner, ctx.refine_cfg, ctx.software_items
     ll, st, hkldata, is_int, tls = ctx.ll, ctx.st, ctx.hkldata, ctx.is_int, ctx.tls
@@ -452,6 +483,15 @@ def main(args):
         labs += ["robustweight", "intensity_z"]
     mtz_out = args.output_prefix+".mtz"
     hkldata.write_mtz(mtz_out, labs=labs, types={"FOM": "W", "FP":"F", "SIGFP":"Q", "I":"J", "SIGI":"Q", "F_est": "F", "F_exp": "F", "llweight": "R"})
+
+    # summary of the run (the log of the refinement above is unchanged)
+    p = args.output_prefix
+    summary.final_summary(args, refiner.st, stats, seq_report=ctx.seq_report,
+                          seq_files=sum(args.seq, []) if args.seq else [], occ_result=ctx.occ_result,
+                          files=[("model (pdb)", p + ".pdb"), ("model (mmcif)", p + ".mmcif"), ("map coefficients", mtz_out),
+                                 ("statistics", p + "_stats.json"), ("TLS groups", p + "_tls.yaml"),
+                                 ("occupancy groups", p + "_occ.yaml"), ("log", getattr(args, "logfile", None))],
+                          elapsed=time.time() - t_start)
 
 # main()
 

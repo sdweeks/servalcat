@@ -63,7 +63,16 @@ electron diffraction — and extends it with TLS.
   dropped the TLS records from the model file.
 * **Corrected Fisher information for anisotropic B** — the curvature used for the off-diagonal elements
   (B12, B13, B23) was three times too large; with the fix, `--adp aniso` converges faster to the same result.
-* **Smaller code base** — no cryo-EM code; a test suite (60 tests) covering the
+* **Occupancy refinement of alternative conformations, set up automatically** — `--refine_occ` scans the input model
+  for conformers and partially occupied atoms and generates the occupancy groups, the constraints and the ADP
+  restraint weights that Servalcat needs (`servalcat util occ_groups` writes them to a file instead); see
+  [below](#occupancy-refinement-of-alternative-conformations). This also fixes a bug that pushed a lone
+  conformer to occupancy 1 whenever another constraint was being corrected.
+* **Summary at the end of a refinement** — the ADP analysis of the final model, the change of R-work, R-free, zBond
+  and zAngle during the cycles as sparklines (and `PREFIX_summary.png` if matplotlib is installed), the sequence
+  alignment if `--seq` was used, the refined occupancies and the output files; the full log still scrolls past as
+  before ([details](#summary-at-the-end-of-a-run)).
+* **Smaller code base** — no cryo-EM code; a test suite (76 tests) covering the
   refinement options, TLS, the selection utility, sequence assignment and MTZ column selection.
 
 **Removed compared with upstream**: cryo-EM single-particle programs (`refine_spa`, `refine_spa_norefmac`,
@@ -192,7 +201,9 @@ its help line. The tables below are grouped by topic instead. Defaults are in pa
 | `--bfactor B` | reset all B-factors to this value first |
 | `--fix_xyz` | keep coordinates fixed |
 | `--adp {fix,iso,aniso}` | B-factors: fixed, isotropic (`iso`), anisotropic. With TLS, `iso` means isotropic *residual* B |
-| `--refine_all_occ` | refine the occupancy of every atom (experimental; groups and constraints go in the config file) |
+| `--refine_occ` | refine the occupancies of alternative conformations and partially occupied atoms. The occupancy groups and constraints are **found in the input model** and written to `PREFIX_occ.yaml` ([details](#occupancy-refinement-of-alternative-conformations)) |
+| `--occ_waters {none,partial,all}`, `--occ_adpr_weight W` | with `--refine_occ`: waters that get a refined occupancy (`partial`: waters with occupancy below 1), and the weight of the ADP restraints around the atoms with refined occupancy (5) |
+| `--refine_all_occ` | refine the occupancy of every atom individually (not grouped; usually unstable) |
 | `--allow_unusual_occupancies` | allow negative or larger-than-one occupancies in the input |
 | `--refine_dfrac` | refine the deuterium fraction (neutron data only) |
 | `--twin`, `--twin_mlalpha` | twin refinement (operators found automatically); optimise the twin fractions by ML instead of estimating them |
@@ -309,6 +320,59 @@ and the sequence residue, so it can be checked in the map. Notes on what is and 
 
 `servalcat util seq --model model.pdb --seq construct.fa` prints the alignments themselves, if you want to look at them.
 
+### Occupancy refinement of alternative conformations
+
+Occupancy refinement needs groups of atoms that share one occupancy and constraints between the groups
+(conformers of a residue add up to 1). `--refine_occ` makes them for you from the **input model**:
+
+```shell
+servalcat refine_xtal --model model.pdb --hklin data.mtz --refine_occ --ncycle 30 -o refined
+```
+
+* **Alternative conformations**: every altloc of a residue is a group; the conformers of the residue are constrained to
+  add up to 1. A residue with a single altloc (the other conformer is not modelled) is constrained to at most 1.
+* **Partially occupied atoms** without altloc (0 < occupancy < 1): the atoms of a residue share one group, at most 1.
+* **Waters**: `--occ_waters partial` (default) refines waters with occupancy below 1; `all` every water; `none` none.
+* The atoms around the refined occupancies get stronger ADP restraints (`--occ_adpr_weight`, 5), because occupancy and
+  B are strongly correlated, and the non-binary solvent mask is switched on, as advised for occupancy refinement.
+* The groups are listed in the log and written to `PREFIX_occ.yaml`; edit it and give it back with `--config` if you
+  want to link conformers of neighbouring residues or change anything. `servalcat util occ_groups --model model.pdb`
+  writes the same file without refining, and shows the residues it found.
+* Only occupancies **below 1 in the input** are seen: a half-occupied water or ligand that is written with occupancy 1
+  is refined only if you set its occupancy first (or add `--occ_waters all`). Conformers always start from the
+  occupancies of the input; 0.5/0.5 is a fine start.
+* Occupancy groups need more cycles (30 or more); the log reminds you if `--ncycle` is smaller. `--refine_occ` cannot
+  be combined with `occ_groups` of your own in `--config`.
+
+In a test with data simulated from 1l2h, three residues with conformers 0.7/0.3 started at 0.5/0.5, a lone conformer
+(truth 0.6) at 0.9, a half-occupied side chain (0.5) at 0.8 and a half-occupied water (0.5) at 0.8 refined to
+0.71/0.29, 0.61, 0.49 and 0.50 in 30 cycles with the coordinates fixed.
+
+### Summary at the end of a run
+
+After the model and map coefficients are written, `refine_xtal` prints (and appends to the log) a summary; the
+refinement log above it is unchanged:
+
+```
+ Refinement summary
+= ADP analysis =
+            min    Q1   med    Q3   max
+Chain A    16.6  26.5  32.7  42.2  97.6
+
+ Refinement progress (4 cycles; cycle 0 = input model)
+  R-work   █▃▂▁▁  0.1214 → 0.0480  ↓ 0.0733
+  R-free   █▄▂▁▁  0.1295 → 0.0638  ↓ 0.0658
+  zBond    ▁▅▇██  1.2634 → 2.0179  ↑ 0.7545
+  zAngle   ▃▁▄▇█  1.6045 → 1.7647  ↑ 0.1603
+
+ Sequence alignment (--seq)       (the assignment table and the residues that differ, only with --seq)
+ Refined occupancies              (input and refined occupancy of every group, only with --refine_occ)
+ Output files
+```
+
+The bars are scaled between the lowest and the highest value of each row. On a terminal they are coloured; the log file
+gets plain text. If matplotlib is installed, `PREFIX_summary.png` shows the same curves as a graph.
+
 Occupancy refinement is described in [`docs/occ_refine.rst`](docs/occ_refine.rst).
 
 ### Other commands
@@ -318,7 +382,7 @@ Occupancy refinement is described in [`docs/occ_refine.rst`](docs/occ_refine.rst
 | `servalcat refine_geom` | geometry optimisation of a model (`--model`), or of a ligand dictionary (`--update_dictionary`), with `--monlib`, `--ligand`, `--hydrogen`, `--ncycle`, `--ncsr`, `--randomize`, `--keywords`, `--config`, `-o` |
 | `servalcat sigmaa` | ML (σA) parameter estimation and map calculation from a model and reflections (`--model`, `--hklin`, `--labin`, `-s`, `--twin`, `--use`, `--mask`, …) |
 | `servalcat fw` | French–Wilson conversion of intensities to amplitudes (`--hklin`, `--labin I,SIGI`) |
-| `servalcat util <subcommand>` | `tls_select` (below), `h_add`, `add_op3`, `geom`, `adp`, `conf`, `fcalc`, `blur`, `map_peaks`, `h_density`, `fix_link`, `merge_models`, `merge_dicts`, `sm2mm`, `mm2ins`, `seq`, `dnarna`, `exte`, `show`, `json2csv` |
+| `servalcat util <subcommand>` | `tls_select` (below), `occ_groups` (occupancy groups from the alternative conformations of a model, above), `h_add`, `add_op3`, `geom`, `adp`, `conf`, `fcalc`, `blur`, `map_peaks`, `h_density`, `fix_link`, `merge_models`, `merge_dicts`, `sm2mm`, `mm2ins`, `seq`, `dnarna`, `exte`, `show`, `json2csv` |
 
 Each has `-h` for its options (`servalcat util <subcommand> -h`). `refine_xtal`, `util tls_select`, `sigmaa` and
 `refine_geom` list them in the same three tiers (required; optional with stated defaults; off unless given).

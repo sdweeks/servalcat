@@ -185,6 +185,12 @@ def add_arguments(p):
     parser = subparsers.add_parser("tls_select", help='Automated selection of TLS groups', description='Automated selection of TLS groups')
     tls_select.add_arguments(parser)
 
+    # occ_groups
+    from servalcat.refine import occ_groups
+    parser = subparsers.add_parser("occ_groups", help='Occupancy groups from alternative conformations and partial occupancies',
+                                   description=occ_groups.UTIL_DESCRIPTION)
+    occ_groups.add_arguments(parser)
+
     # sm2mm
     parser = subparsers.add_parser("sm2mm", help='Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)', description='Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)')
     parser.add_argument('files', nargs='+', help='Cif/ins/res/hkl files')
@@ -946,6 +952,10 @@ def tls_select_main(args):
     from servalcat.refine import tls_select
     return tls_select.main(args)
 
+def occ_groups_main(args):
+    from servalcat.refine import occ_groups
+    occ_groups.main(args)
+
 def sm2mm(args):
     set_prefix(args)
     st, mtz = fileio.read_small_molecule_files(args.files)
@@ -1256,6 +1266,8 @@ def set_prefix(args):
     elif args.subcommand == "tls_select":
         from servalcat.refine import tls_select
         tls_select.set_prefix(args)
+    elif args.subcommand == "occ_groups":
+        args.output_prefix = fileio.splitext(os.path.basename(args.model))[0] + "_occ"
     elif args.subcommand == "sm2mm":
         args.output_prefix = os.path.basename(fileio.splitext(args.files[0])[0])
     elif args.subcommand == "json2csv":
@@ -1278,6 +1290,7 @@ def main(args):
                  fcalc=fcalc,
                  blur=blur,
                  tls_select=tls_select_main,
+                 occ_groups=occ_groups_main,
                  sm2mm=sm2mm,
                  mm2ins=mm2ins,
                  seq=seq,
