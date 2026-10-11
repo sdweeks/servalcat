@@ -30,7 +30,7 @@ def add_arguments(parser, after_required=None):
     off unless given. after_required(parser): called before tiers 2 and 3 so that a program built on this one
     (tls_select) can list its own options first."""
     utils.cli.setup_parser(parser, "Restrained maximum-likelihood refinement of a crystallographic model against X-ray data "
-                           "(isotropic or anisotropic ADPs, optional TLS), without the refmac5 binary.",
+                           "(isotropic or anisotropic ADPs, optional TLS).",
                            "--hklin FILE --model FILE [--monlib DIR]", "--model model.pdb --hklin data.mtz -o refined")
 
     # (1) required

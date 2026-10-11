@@ -261,8 +261,7 @@ The options are listed in groups: required arguments; optional arguments with de
     usage: servalcat refine_xtal --hklin FILE --model FILE [--monlib DIR] [options]
 
     Restrained maximum-likelihood refinement of a crystallographic model against
-    X-ray data (isotropic or anisotropic ADPs, optional TLS), without the refmac5
-    binary.
+    X-ray data (isotropic or anisotropic ADPs, optional TLS).
 
     help:
       -h, --help                      show this help message and exit
