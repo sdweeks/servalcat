@@ -160,6 +160,13 @@ The scan uses the same number of groups for every chain (a chain that cannot be 
 
 Notes: the residue ranges are written as gemmi selections (``//A/4-80/*``), so a non-polymer residue numbered inside a range is included in the group. The scan takes about (N groups + 1) times the cost of ``--tls_cycles`` cycles of TLS refinement; use ``--max_groups`` or ``--tls_cycles`` to shorten it. The recommendation is based on an R-value difference measured on the same test set, but test sets are small, so look at the whole curve and at ``--ngroups`` results before deciding, and prefer fewer groups at lower resolution.
 
+Sequence assignment and mismatch feedback
+-----------------------------------------
+
+By default SEQRES and ``label_seq_id`` are generated from the modelled residues only. With ``--seq`` (FASTA file(s) with protein, DNA and/or RNA sequences) the best matching sequence is assigned to every polymer chain, so that unmodelled residues, tags and gaps are represented in SEQRES and the mmCIF numbering. A sequence is accepted if at least ``--seq_min_identity`` (default 0.8) of the modelled residues agree with it; sequences with ``U`` are not used for DNA and sequences with ``T`` are not used for RNA.
+
+The log lists the assignment and every residue that differs from the sequence (chain/number, model residue, sequence residue). Modified residues such as MSE count as the residue they replace and unknown (UNK) residues are not counted. A stretch built out of register is reported as a warning: sequence skipped between bonded residues, modelled residues without a counterpart in the sequence, or a stretch that fits the sequence after a shift.
+
 Input columns for diffraction data
 ----------------------------------
 

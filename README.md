@@ -163,7 +163,9 @@ Ligands that are not in the monomer library need a restraint dictionary (e.g. fr
 | `--jellybody`, `--jellybody_params SIGMA DMAX`, `--jellyonly` | jelly-body restraints (sigma 0.01, dmax 4.2 Å); `--jellyonly` (experimental) uses them instead of the geometry restraints |
 | `--adaptive_restraint ALPHA` | scale the target of bond, angle, plane, torsion and vdW restraints by 1 + ALPHA·z² (robust) |
 | `--vonmises` | experimental von Mises angle restraints |
-| `--keep_entities` | do not regenerate entity and sequence information |
+| `--seq FASTA [FASTA ...]` | sequence file(s); the best-matching sequence is assigned to each protein, DNA and RNA chain (see [Sequence assignment](#sequence-assignment-and-mismatch-feedback)) |
+| `--seq_min_identity X` | minimum fraction of modelled residues that must agree with a sequence for it to be assigned (default 0.8) |
+| `--keep_entities` | do not regenerate entity and sequence information (SEQRES of the input is kept) |
 | `--keep_charges` | use scattering factors of charged atoms (use with care) |
 
 ### Refinement control
@@ -251,6 +253,48 @@ refine:
   write_trajectory: false
   exte_files: []                # json files with external restraints (written as PREFIX_exte.json)
 ```
+
+### Sequence assignment and mismatch feedback
+
+By default the SEQRES records and `label_seq_id` of the output are generated from the **modelled** residues, so unmodelled
+termini, tags and gaps are not represented. With `--seq construct.fa` the full construct sequence is used instead:
+
+```
+servalcat refine_xtal --model model.pdb --hklin data.mtz -s xray --seq construct.fa ... 
+```
+
+* The FASTA file may contain any number of protein, DNA and RNA sequences (headers are used as names). Each polymer chain
+  is aligned to every sequence of its own type and the best match is taken. A sequence containing `U` is never used
+  for DNA, nor one containing `T` for RNA, so DNA and RNA chains with the same base order cannot be mixed up.
+  Sequences in the file that match no chain are ignored.
+* A sequence is assigned only if at least `--seq_min_identity` (default 80%) of the modelled residues agree with it.
+  Otherwise the chain keeps the modelled sequence and the log says which sequence was closest and how similar it was.
+* Residues are numbered (`label_seq_id`) by the alignment, so gaps and unmodelled ends are correct in SEQRES and in the mmCIF output.
+
+The log (and therefore every re-run after you edit the model in Coot) contains a table and the differences found:
+
+```
+Sequence assignment from construct.fa (minimum identity 80%)
+ chain(s)   type     sequence         length modelled identity mismatches
+ A          protein  construct           156      144    99.3%          1
+    sequence positions not modelled (chain A): 1-6, 57, 139-142, 156
+
+Residues that differ from the assigned sequence (1); mutations, or residues built/typed wrongly:
+   A/50     model GLU  sequence ALA  (construct)
+```
+
+This applies when you build into a map: a residue of the wrong type is listed with its number, the model residue
+and the sequence residue, so it can be checked in the map. Notes on what is and is not counted:
+
+* Modified residues that replace a standard one (MSE for MET, ...) count as agreeing; unknown residues (`UNK`, or `N` in nucleic
+  acids) are listed separately and do not lower the identity.
+* A **register error** (a stretch built one or two residues out of register) usually does not appear as many
+  mismatches, because the alignment explains it as a gap. It is therefore reported explicitly: sequence skipped between
+  two bonded residues, modelled residues with no counterpart in the sequence, or a stretch that agrees with the sequence
+  after a shift. These appear as `WARNING:` lines.
+* Two sequences fitting equally well, or a chain with no acceptable sequence, are also warned about.
+
+`servalcat util seq --model model.pdb --seq construct.fa` prints the alignments themselves, if you want to look at them.
 
 Occupancy refinement is described in [`docs/occ_refine.rst`](docs/occ_refine.rst).
 

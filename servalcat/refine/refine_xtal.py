@@ -127,6 +127,11 @@ def add_arguments(parser):
                         help="Use scattering factor for charged atoms. Use it with care.")
     parser.add_argument("--keep_entities", action='store_true',
                         help="Do not override entities")
+    parser.add_argument("--seq", nargs="*", action="append", metavar="FASTA",
+                        help="Sequence file(s) (FASTA). The best matching sequence is assigned to each protein/DNA/RNA chain; "
+                        "it is used for SEQRES and label_seq_id (unmodelled residues/gaps), and residues that differ from it are reported")
+    parser.add_argument("--seq_min_identity", type=float, default=0.8,
+                        help="Minimum fraction of modelled residues that agree with a sequence for it to be assigned (default: %(default)s)")
     parser.add_argument('--allow_unusual_occupancies', action="store_true", help="Allow negative or more than one occupancies")
     parser.add_argument('-o','--output_prefix', help="Prefix of output files (default: derived from the model name)")
     parser.add_argument("--write_trajectory", action='store_true',
@@ -228,6 +233,18 @@ def setup(args, use_tls=True):
         is_int = False
         
     utils.model.fix_deuterium_residues(st)
+    seq_files = sum(args.seq, []) if args.seq else []
+    seq_records = None
+    seq_report = None
+    if seq_files:
+        try:
+            seq_records = utils.model.read_sequence_records(seq_files)
+        except (RuntimeError, OSError) as e:
+            raise SystemExit("Error: {}".format(e))
+        if not seq_records:
+            raise SystemExit("Error: no sequences found in {}".format(", ".join(seq_files)))
+        if not 0 < args.seq_min_identity <= 1:
+            raise SystemExit("Error: --seq_min_identity must be in (0, 1]")
     use_nucleus = args.source in ("neutron", "electron")
     if args.unrestrained:
         monlib = gemmi.MonLib()
@@ -241,6 +258,11 @@ def setup(args, use_tls=True):
                 logger.writeln("\nWARNING: in unrestrained refinement hydrogen atoms are not generated.\n")
         for i, cra in enumerate(st[0].all()):
             cra.atom.serial = i + 1
+        if seq_records and not args.keep_entities:
+            seq_report = utils.model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
+                                                    fix_sequences=True, sequences=seq_records,
+                                                    min_seq_identity=args.seq_min_identity)
+            utils.model.log_sequence_report(seq_report, logger, seq_files)
     else:
         try:
             monlib = utils.restraints.load_monomer_library(st, monomer_dir=args.monlib, cif_files=args.ligand,
@@ -249,8 +271,19 @@ def setup(args, use_tls=True):
         except RuntimeError as e:
             raise SystemExit("Error: {}".format(e))
         if not args.keep_entities:
-            utils.model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
-                                       fix_sequences=True)
+            seq_report = utils.model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
+                                                    fix_sequences=True, sequences=seq_records,
+                                                    min_seq_identity=args.seq_min_identity)
+        elif seq_records:
+            seq_report = utils.model.assign_sequences(st, seq_records, args.seq_min_identity)
+            for chain in st[0]:
+                for res in chain:
+                    res.label_seq = None
+            st.assign_label_seq_id()
+            utils.model.set_labels(st, seq_report)
+            utils.model.analyse_sequences(st, seq_report)
+        if seq_report is not None:
+            utils.model.log_sequence_report(seq_report, logger, seq_files)
         utils.restraints.find_and_fix_links(st, monlib, find_metal_links=args.find_links,
                                             add_found=args.find_links)
         h_change = {"all":gemmi.HydrogenChange.ReAddKnown,
