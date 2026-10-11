@@ -6,6 +6,7 @@ This software is released under the
 Mozilla Public License, version 2.0; see LICENSE.
 """
 from __future__ import absolute_import, division, print_function, generators
+import argparse
 import unittest
 import itertools
 import json
@@ -151,6 +152,51 @@ class TestTlsSelect(unittest.TestCase):
         for fn in ("scan_tls.yaml", "scan_tls_N1.yaml", "scan_tls_N2.yaml", "scan_tls_N3.yaml"):
             self.assertTrue(os.path.isfile(fn), fn)
         self.assertEqual(len(self.read_ranges("scan_tls.yaml")), 2)
+
+    def test_parallel_scan_equals_serial_scan(self):
+        # trials are independent, so running them in parallel processes must not change any number
+        self.run_select(["--max_groups", "2", "--tls_cycles", "3", "-d", "2.5", "--jobs", "1"], prefix="ser")
+        self.run_select(["--max_groups", "2", "--tls_cycles", "3", "-d", "2.5", "--jobs", "3"], prefix="par")
+        a, b = pandas.read_csv("ser_scan.csv"), pandas.read_csv("par_scan.csv")
+        self.assertEqual(list(a.N), [0, 1, 2])
+        self.assertEqual(list(b.N), [0, 1, 2]) # sorted by N although trials finish in any order
+        for k in ("Rwork", "Rfree", "-LL"):
+            self.assertTrue(numpy.allclose(a[k], b[k], rtol=0, atol=1e-9), k)
+        self.assertIn("in parallel on 3 processes", open("par.log").read())
+        self.assertIn("one after another", open("ser.log").read())
+
+    def test_failing_trial_is_reported(self):
+        args = argparse.ArgumentParser()
+        tls_select.add_arguments(args)
+        a = args.parse_args(["--model", "start.pdb", "--hklin", "data.mtz", "-s", "xray", "--labin", "FP,SIGFP,FreeR_flag",
+                             "--no_solvent", "--hydrogen", "no", "-d", "2.5", "-o", "ft"])
+        os.makedirs("ft_trials", exist_ok=True)
+        specs = [("bad", "no_such_file.yaml", "ft_trials/bad"), ("ok", None, "ft_trials/ok")]
+        with self.assertRaises(FileNotFoundError):
+            tls_select.run_trials(a, specs, 1, 2)
+
+class TestParallelHelpers(unittest.TestCase):
+    def test_available_cpus(self):
+        n = tls_select.available_cpus()
+        self.assertGreaterEqual(n, 1)
+        self.assertLessEqual(n, os.cpu_count() or n)
+
+    def test_single_threaded_libraries_restores_environment(self):
+        os.environ["OMP_NUM_THREADS"] = "7"
+        os.environ.pop("MKL_NUM_THREADS", None)
+        with tls_select.single_threaded_libraries():
+            self.assertEqual(os.environ["OMP_NUM_THREADS"], "1")
+            self.assertEqual(os.environ["MKL_NUM_THREADS"], "1")
+        self.assertEqual(os.environ["OMP_NUM_THREADS"], "7")
+        self.assertNotIn("MKL_NUM_THREADS", os.environ)
+        del os.environ["OMP_NUM_THREADS"]
+
+    def test_n_jobs(self):
+        ns = argparse.Namespace
+        self.assertEqual(tls_select.n_jobs(ns(jobs=4), 9), 4)
+        self.assertEqual(tls_select.n_jobs(ns(jobs=4), 2), 2)   # never more processes than trials
+        self.assertEqual(tls_select.n_jobs(ns(jobs=0), 100), tls_select.available_cpus())
+        self.assertEqual(tls_select.n_jobs(ns(jobs=0), 1), 1)
 
 class TestTlsSelectTwoChains(unittest.TestCase):
     def setUp(self):

@@ -354,6 +354,14 @@ per-atom gradient and Fisher matrix; it correctly places the boundary of two sim
 evaluated by a short refinement with the coordinates fixed (`--tls_cycles`, 8) in which residual B and TLS are
 refined, using the same code as `refine_xtal`; N = 0 is the same refinement without TLS.
 
+**Parallel trials.** The trial refinements (N = 0 … `--max_groups`) are independent and each uses a single CPU thread, so
+they run in parallel: by default one process per CPU available to the program (CPU affinity and container CPU quota are
+respected, and never more processes than trials). When a trial finishes the next one starts, so with 9 trials on
+4 CPUs the machine stays busy until the last ones are running. Results are identical to a serial run. Each process holds
+its own copy of the data and restraints, so for a large structure on a machine with little memory reduce the number with
+`-j N` (`-j 1` runs the trials one after another). For example, a scan of 0–4 groups on the test data took 94 s serially and
+38 s on 4 CPUs (the trials alone: 83 s of work in 28 s).
+
 **R-values per number of groups.** The log shows a table, a bar graph and a CCP4 loggraph table; the same data are
 in `PREFIX_scan.csv` and `PREFIX_scan.json` (which also holds the residue ranges of every N), and
 `PREFIX_scan.png` if matplotlib is installed. Example, for data simulated from two rigid domains:
@@ -397,6 +405,7 @@ servalcat util tls_select ... --ngroups A:3 --no_eval   # ranges only, no R-valu
 | `--no_eval` | with `--ngroups`: do not run the refinement that gives R-values |
 | `--max_groups N` | largest number of groups per chain in the scan (8) |
 | `--min_residues N` | smallest group, in residues (10); a chain too short for N groups gets as many as fit |
+| `-j`, `--jobs N` | number of trials run in parallel (default: number of available CPUs) |
 | `--tls_cycles N` | cycles of the refinement that evaluates each N (8) |
 | `--min_delta X` | smallest decrease of R that counts as an improvement (0.001) |
 | `--tie X` | jumps within this fraction of the biggest one are equivalent; the lowest N among them is chosen (0.25) |

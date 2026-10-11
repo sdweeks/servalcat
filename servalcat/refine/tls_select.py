@@ -60,6 +60,11 @@ def add_arguments(parser):
     g.add_argument("--tie", type=float, default=0.25,
                    help="Jumps within this fraction of the biggest one are considered equivalent; the lowest number "
                    "of groups among them is chosen (default: %(default)g)")
+    g.add_argument("-j", "--jobs", type=int, default=0, metavar="N",
+                   help="Number of trial refinements to run in parallel, each in its own single-threaded process "
+                   "(default: 0 = number of CPUs available to the program). The next trial starts when one finishes. "
+                   "Every process holds its own copy of the data and restraints, so reduce this for large structures "
+                   "if memory is short; 1 runs the trials one after another")
     g.add_argument("--no_eval", action="store_true",
                    help="With --ngroups: only determine the residue ranges, do not refine to get R-values")
 # add_arguments()
@@ -294,6 +299,85 @@ def run_trial(args0, yaml_path, prefix, ncycle):
     del ctx
     return res
 
+def available_cpus():
+    """CPUs this process may use: the affinity mask, limited by a container (cgroup) CPU quota if there is one"""
+    try:
+        n = len(os.sched_getaffinity(0))
+    except AttributeError: # macOS, Windows
+        n = os.cpu_count() or 1
+    quota = None
+    try: # cgroup v2
+        with open("/sys/fs/cgroup/cpu.max") as f:
+            q, per = f.read().split()[:2]
+        if q != "max":
+            quota = int(q) // int(per)
+    except (OSError, ValueError):
+        try: # cgroup v1
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as f:
+                q = int(f.read())
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as f:
+                per = int(f.read())
+            if q > 0 and per > 0:
+                quota = q // per
+        except (OSError, ValueError):
+            pass
+    if quota is not None:
+        n = min(n, max(1, quota))
+    return max(1, n)
+
+_THREAD_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
+                "VECLIB_MAXIMUM_THREADS")
+
+@contextlib.contextmanager
+def single_threaded_libraries():
+    """Worker processes are started with one thread for numerical libraries; otherwise N processes x M threads
+    would oversubscribe the CPUs."""
+    old = {k: os.environ.get(k) for k in _THREAD_VARS}
+    for k in _THREAD_VARS:
+        os.environ[k] = "1"
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+
+def run_trials(args0, specs, ncycle, jobs, on_done=None):
+    """Run trial refinements, `jobs` at a time. specs: [(key, yaml_path, prefix)], to be given with the most expensive
+    first so that the processes finish at about the same time; a new trial is started whenever one has finished.
+    on_done(key, result) is called in this process as each trial completes. Returns {key: result}."""
+    results = {}
+    jobs = max(1, min(jobs, len(specs)))
+    if jobs == 1:
+        for key, yaml_path, prefix in specs:
+            results[key] = run_trial(args0, yaml_path, prefix, ncycle)
+            if on_done: on_done(key, results[key])
+        return results
+    import concurrent.futures
+    import concurrent.futures.process
+    import multiprocessing
+    # "spawn": clean processes that do not inherit the log file, open data or library state of this one
+    mp_ctx = multiprocessing.get_context("spawn")
+    with single_threaded_libraries():
+        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs, mp_context=mp_ctx) as ex:
+            futs = {ex.submit(run_trial, args0, yaml_path, prefix, ncycle): key for key, yaml_path, prefix in specs}
+            try:
+                for f in concurrent.futures.as_completed(futs):
+                    key = futs[f]
+                    results[key] = f.result()
+                    if on_done: on_done(key, results[key])
+            except concurrent.futures.process.BrokenProcessPool:
+                ex.shutdown(cancel_futures=True)
+                raise SystemExit("Error: a trial process died (out of memory?). Try a smaller --jobs, or --jobs 1")
+            except BaseException:
+                ex.shutdown(cancel_futures=True)
+                raise
+    return results
+
+def n_jobs(args, n_tasks):
+    jobs = args.jobs if args.jobs and args.jobs > 0 else available_cpus()
+    return max(1, min(jobs, n_tasks))
+
 def r_keys(summary):
     for w, f in (("Rwork", "Rfree"), ("R1work", "R1free")):
         if f in summary:
@@ -365,9 +449,11 @@ def main(args):
         write_yaml(out_yaml, groups)
         logger.writeln(f"\nTLS definition written: {out_yaml}\n  use it with: refine_xtal --tls_file {out_yaml}")
         if not args.no_eval:
-            logger.writeln(f"\nEvaluating by refinement (xyz fixed, {args.tls_cycles} cycles)..")
-            r0 = run_trial(args0, None, f"{trial_dir}/n0", args.tls_cycles)
-            r1 = run_trial(args0, out_yaml, f"{trial_dir}/custom", args.tls_cycles)
+            jobs = n_jobs(args, 2)
+            logger.writeln(f"\nEvaluating by refinement (xyz fixed, {args.tls_cycles} cycles){f' on {jobs} processes' if jobs > 1 else ''}..")
+            res = run_trials(args0, [("custom", out_yaml, f"{trial_dir}/custom"), ("n0", None, f"{trial_dir}/n0")],
+                             args.tls_cycles, jobs)
+            r0, r1 = res["n0"], res["custom"]
             kw, kf = r_keys(r1)
             for lab, r in (("no TLS", r0), (f"{len(groups)} groups", r1)):
                 logger.writeln(f" {lab:12s} " + "  ".join(f"{k}= {r[k]:.4f}" for k in (kw, kf) if k) + f"  -LL= {r['-LL']:.1f}")
@@ -384,23 +470,36 @@ def main(args):
         prev = counts
     logger.writeln(f"\nScanning 0 .. {configs[-1][0]} groups per chain; each evaluated by {args.tls_cycles} cycles of refinement "
                    "(xyz fixed, residual B + TLS)")
-    r0 = run_trial(args0, None, f"{trial_dir}/n0", args.tls_cycles)
-    kw, kf = r_keys(r0)
-    if kf is None:
-        logger.writeln("NOTE: no test set; R (all data) is used for the selection")
-    key_sel = kf or kw
-    rows.append({"N": 0, "groups": 0, "params": 0, "dp_score": 0., **{k: v for k, v in r0.items()}})
-    logger.writeln(f"  N= 0 (no TLS)  {kw}= {r0[kw]:.4f}" + (f"  {kf}= {r0[kf]:.4f}" if kf else "") + f"  [{r0['seconds']:.0f} s]")
-    descs = {}
+    descs, preds, ngroups_n, specs = {}, {}, {}, []
     for n, counts in configs:
         groups, desc, pred = config_for(counts)
         yaml_n = f"{prefix}_tls_N{n}.yaml"
         write_yaml(yaml_n, groups)
-        r = run_trial(args0, yaml_n, f"{trial_dir}/n{n}", args.tls_cycles)
-        rows.append({"N": n, "groups": len(groups), "params": tls_mod.NPAR * len(groups), "dp_score": pred, **r})
-        descs[n] = desc
-        logger.writeln(f"  N={n:2d} ({len(groups):2d} groups)  {kw}= {r[kw]:.4f}" + (f"  {kf}= {r[kf]:.4f}" if kf else "") +
-                       f"  [{r['seconds']:.0f} s]")
+        descs[n], preds[n], ngroups_n[n] = desc, pred, len(groups)
+        specs.append((n, yaml_n, f"{trial_dir}/n{n}"))
+    specs.reverse()                                   # most groups (most expensive) first
+    specs.append((0, None, f"{trial_dir}/n0"))        # cheapest last
+    jobs = n_jobs(args, len(specs))
+    logger.writeln(f"Running {len(specs)} trial refinements" +
+                   (f" in parallel on {jobs} processes ({available_cpus()} CPUs available; the next one starts when one finishes)"
+                    if jobs > 1 else " one after another"))
+    def report(n, r): # called as each trial finishes (not in the order of N)
+        kw, kf = r_keys(r)
+        lab = "N= 0 (no TLS)" if n == 0 else f"N={n:2d} ({ngroups_n[n]:2d} groups)"
+        logger.writeln(f"  {lab}  {kw}= {r[kw]:.4f}" + (f"  {kf}= {r[kf]:.4f}" if kf else "") + f"  [{r['seconds']:.0f} s]")
+    t_trials = time.time()
+    res = run_trials(args0, specs, args.tls_cycles, jobs, report)
+    wall = time.time() - t_trials
+    work = sum(r["seconds"] for r in res.values())
+    if jobs > 1:
+        logger.writeln(f"  {len(specs)} trials took {wall:.0f} s ({work:.0f} s of work, {work / max(wall, 1e-9):.1f}x faster than one after another)")
+    kw, kf = r_keys(res[0])
+    if kf is None:
+        logger.writeln("NOTE: no test set; R (all data) is used for the selection")
+    key_sel = kf or kw
+    rows.append({"N": 0, "groups": 0, "params": 0, "dp_score": 0., **{k: v for k, v in res[0].items()}})
+    for n, counts in configs:
+        rows.append({"N": n, "groups": ngroups_n[n], "params": tls_mod.NPAR * ngroups_n[n], "dp_score": preds[n], **res[n]})
     M = [r[key_sel] for r in rows]
     best, why = choose_n(M, args.min_delta, args.tie)
     for r in rows:
