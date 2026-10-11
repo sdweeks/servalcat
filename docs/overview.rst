@@ -1,7 +1,7 @@
 Overview
 ========
 
-Servalcat refines atomic models against X-ray (and neutron / electron) crystallographic data, without the REFMAC5 binary.
+Servalcat refines atomic models against X-ray (and neutron / electron) crystallographic data.
 
 * refinement (``refine_xtal``): amplitude or intensity based maximum-likelihood refinement of
   coordinates, isotropic or anisotropic ADPs, TLS groups, occupancies and (for neutron data) deuterium fractions.
