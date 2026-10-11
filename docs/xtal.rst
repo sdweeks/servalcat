@@ -253,98 +253,285 @@ Servalcat provides a helper command which converts files between the small molec
 Complete list of options
 ------------------------
 
+The options are listed in groups: required arguments; optional arguments with default values (the default is stated for each); and optional features that are off unless given (refinement options, TLS, sequence annotation, additional inputs, advanced options). The same layout is used by ``util tls_select``.
+
 .. code-block:: console
 
     $ servalcat refine_xtal --help
-    usage: servalcat refine_xtal [-h] --hklin HKLIN [--hklin_free HKLIN_FREE] [-d D_MIN] [--d_max D_MAX] [--nbins NBINS]
-                                        [--nbins_ml NBINS_ML] [--labin LABIN] [--labin_free LABIN_FREE] [--free FREE] --model MODEL
-                                        [--monlib MONLIB] [--ligand [LIGAND ...]] [--newligand_continue] [--hydrogen {all,yes,no}] [--hout]
-                                        [--jellybody] [--jellybody_params sigma dmax] [--jellyonly] [--find_links]
-                                        [--keywords KEYWORDS [KEYWORDS ...]] [--keyword_file KEYWORD_FILE [KEYWORD_FILE ...]]
-                                        [--randomize RANDOMIZE] [--ncycle NCYCLE] [--weight WEIGHT] [--no_weight_adjust]
-                                        [--target_bond_rmsz_range TARGET_BOND_RMSZ_RANGE TARGET_BOND_RMSZ_RANGE] [--ncsr]
-                                        [--adpr_weight ADPR_WEIGHT] [--occr_weight OCCR_WEIGHT] [--bfactor BFACTOR] [--fix_xyz]
-                                        [--adp {fix,iso,aniso}] [--refine_all_occ] [--max_dist_for_adp_restraint MAX_DIST_FOR_ADP_RESTRAINT]
-                                        [--adp_restraint_power ADP_RESTRAINT_POWER] [--adp_restraint_exp_fac ADP_RESTRAINT_EXP_FAC]
-                                        [--adp_restraint_no_long_range] [--adp_restraint_mode {diff,kldiv}] [--unrestrained] [--refine_h]
-                                        [--refine_dfrac] [--twin] [-s {electron,xray,neutron,custom}] [--no_solvent] [--use_in_est {all,work,test}]
-                                        [--keep_charges] [--keep_entities] [--allow_unusual_occupancies] [-o OUTPUT_PREFIX]
-                                        [--write_trajectory] [--vonmises] [--prefer_intensity] [--use_fw] [--config CONFIG]
+    usage: servalcat refine_xtal --hklin FILE --model FILE [--monlib DIR] [options]
 
-    program to refine crystallographic structures
+    Restrained maximum-likelihood refinement of a crystallographic model against
+    X-ray data (isotropic or anisotropic ADPs, optional TLS), without the refmac5
+    binary.
 
-    optional arguments:
-    -h, --help            show this help message and exit
-    --hklin HKLIN
-    --hklin_free HKLIN_FREE
-                            Input MTZ file for test flags
-    -d D_MIN, --d_min D_MIN
-    --d_max D_MAX
-    --nbins NBINS         Number of bins for statistics (default: auto)
-    --nbins_ml NBINS_ML   Number of bins for ML parameters (default: auto)
-    --labin LABIN         F,SIGF,FREE input
-    --labin_free LABIN_FREE
-                            MTZ column of --hklin_free
-    --free FREE           flag number for test set
-    --model MODEL         Input atomic model file
-    --monlib MONLIB       Monomer library path. Default: $CLIBD_MON
-    --ligand [LIGAND ...]
-                            restraint dictionary cif file(s)
-    --newligand_continue  Make ad-hoc restraints for unknown ligands (not recommended)
-    --hydrogen {all,yes,no}
-                            all: add riding hydrogen atoms, yes: use hydrogen atoms if present, no: remove hydrogen atoms in input. Default:
-                            all
-    --hout                write hydrogen atoms in the output model
-    --jellybody           Use jelly body restraints
-    --jellybody_params sigma dmax
-                            Jelly body sigma and dmax (default: [0.01, 4.2])
-    --jellyonly           Jelly body only (experimental, may not be useful)
-    --find_links          Automatically add links
-    --keywords KEYWORDS [KEYWORDS ...]
-                            refmac keyword(s)
-    --keyword_file KEYWORD_FILE [KEYWORD_FILE ...]
-                            refmac keyword file(s)
-    --randomize RANDOMIZE
-                            Shake coordinates with specified rmsd
-    --ncycle NCYCLE       number of CG cycles (default: 10)
-    --weight WEIGHT       refinement weight (default: auto)
-    --no_weight_adjust    Do not adjust weight during refinement
-    --target_bond_rmsz_range TARGET_BOND_RMSZ_RANGE TARGET_BOND_RMSZ_RANGE
-                            Bond rmsz range for weight adjustment (default: [0.5, 1.0])
-    --ncsr                Use local NCS restraints
-    --adpr_weight ADPR_WEIGHT
-                            ADP restraint weight (default: 1.000000)
-    --occr_weight OCCR_WEIGHT
-                            Occupancy restraint weight (default: 0.000000)
-    --bfactor BFACTOR     reset all atomic B values to specified value
-    --fix_xyz
-    --adp {fix,iso,aniso}
-    --refine_all_occ
-    --max_dist_for_adp_restraint MAX_DIST_FOR_ADP_RESTRAINT
-    --adp_restraint_power ADP_RESTRAINT_POWER
-    --adp_restraint_exp_fac ADP_RESTRAINT_EXP_FAC
-    --adp_restraint_no_long_range
-    --adp_restraint_mode {diff,kldiv}
-    --unrestrained        No positional restraints
-    --refine_h            Refine hydrogen (default: restraints only)
-    --refine_dfrac        Refine deuterium fraction (neutron only)
-    --twin                Turn on twin refinement
-    -s {electron,xray,neutron,custom}, --source {electron,xray,neutron,custom}
-                          Radiation source (default: xray)
-    --no_solvent          Do not consider bulk solvent contribution
-    --use_in_est {all,work,test}
-                            Which set of reflections to use for the ML parameter estimation. Default: 'work' if --twin is set; otherwise
-                            'test'.
-    --keep_charges        Use scattering factor for charged atoms. Use it with care.
-    --keep_entities       Do not override entities
-    --allow_unusual_occupancies
-                            Allow negative or more than one occupancies
-    -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
-    --write_trajectory    Write all output from cycles
-    --vonmises            Experimental: von Mises type restraint for angles
-    --prefer_intensity
-    --use_fw              For debugging purpose; use F&W-converted amplitudes but use intensity for stats
-    --config CONFIG       Config file (.yaml)
+    help:
+      -h, --help                      show this help message and exit
+
+    Required arguments:
+      --hklin FILE                    Reflection data: MTZ or mmCIF structure factors, merged or
+                                      unmerged
+      --model FILE                    Atomic model: PDB or mmCIF (also small-molecule .res/.ins/.cif)
+      --monlib DIR                    Monomer library: directory with the CCP4 monomer cif
+                                      dictionaries (required unless the environment variable CLIBD_MON
+                                      is set) (default: $CLIBD_MON)
+
+    Optional arguments with default values:
+      -s, --source {electron,xray,neutron,custom}
+                                      Radiation source (default: xray)
+      --labin COLUMNS                 MTZ columns of observations, sigmas and test flags, e.g.
+                                      FP,SIGFP,FreeR_flag or I,SIGI,FreeR_flag (default:
+                                      F,SIGF,FreeR_flag if present, otherwise chosen by column type)
+      --free N                        Value of the test-set flag (default: guessed from the flags)
+      -d, --d_min A                   High-resolution limit in Angstrom (default: all data)
+      --d_max A                       Low-resolution limit in Angstrom (default: all data)
+      --nbins N                       Number of resolution bins for statistics (default: auto)
+      --nbins_ml N                    Number of resolution bins for ML parameters (default: auto)
+      --use_in_est {all,work,test}    Reflections used to estimate the ML parameters (default: test;
+                                      work with --twin)
+      --ncycle N                      Number of refinement cycles (default: 10)
+      --adp {fix,iso,aniso}           ADP model; with --tls the residual B stays isotropic (default:
+                                      iso)
+      --weight W                      Weight of the geometry restraints relative to the data (default:
+                                      auto)
+      --target_bond_rmsz_range MIN MAX
+                                      Bond rmsZ range that the automatic weight adjustment aims for
+                                      (default: [0.5, 1.0])
+      --hydrogen {all,yes,no}         all: add riding hydrogen atoms; yes: use hydrogen atoms if
+                                      present in the model; no: remove hydrogen atoms (default: all)
+      --adpr_weight W                 Weight of the ADP restraints (default: 1.0)
+      --occr_weight W                 Weight of the occupancy restraints (default: 0.0)
+      --adp_restraint_mode {diff,kldiv}
+                                      Type of the ADP restraint (default: kldiv)
+      --max_dist_for_adp_restraint A  Largest distance between atoms with an ADP restraint, in
+                                      Angstrom (default: 4.0)
+      --adp_restraint_power P         Power of the distance dependence of the ADP restraint weights
+                                      (default: 4)
+      --adp_restraint_exp_fac F       Factor in the exponent of the distance dependence of the ADP
+                                      restraint weights (default: 0.011271)
+      --jellybody_params SIGMA DMAX   Sigma and maximum distance of the jelly-body restraints, used
+                                      with --jellybody (default: [0.01, 4.2])
+      --tls_ncycle N                  Number of TLS steps in each refinement cycle, used with --tls
+                                      (default: 1)
+      --seq_min_identity X            Fraction of the modelled residues that must agree with a
+                                      sequence for it to be assigned, used with --seq (default: 0.8)
+      --randomize RMSD                Shake the coordinates with this rmsd in Angstrom before
+                                      refinement (default: 0, no shaking)
+      -o, --output_prefix PREFIX      Prefix of the output files (default: <model name>_refined)
+
+    Refinement options (off unless given):
+      --fix_xyz                       Do not refine the coordinates (default: off)
+      --refine_all_occ                Refine all occupancies (see docs/occ_refine.rst) (default: off)
+      --refine_h                      Refine hydrogen positions (otherwise restraints only) (default:
+                                      off)
+      --refine_dfrac                  Refine the deuterium fraction (neutron data only) (default: off)
+      --twin                          Twin refinement (default: off)
+      --twin_mlalpha                  Optimise the twin fractions by ML (default: off)
+      --unrestrained                  No geometry restraints (no monomer library needed) (default:
+                                      off)
+      --ncsr                          Local NCS restraints (default: off)
+      --jellybody                     Jelly-body restraints (default: off)
+      --jellyonly                     Jelly-body restraints instead of geometry restraints
+                                      (experimental) (default: off)
+      --adaptive_restraint ALPHA      Scale the target of bond, angle, plane, torsion and vdW
+                                      restraints by 1 + ALPHA * z^2 (default: off)
+      --no_weight_adjust              Do not adjust the restraint weight during refinement (default:
+                                      off)
+      --no_solvent                    No bulk-solvent contribution (default: off)
+      --bfactor B                     Reset all atomic B-values to this value before refinement
+                                      (default: keep the B-values of the model)
+      --find_links                    Find and add links such as metal coordination (default: off)
+      --hout                          Write hydrogen atoms in the output model (default: off)
+      --adp_restraint_no_long_range   ADP restraints between bonded atoms and 1-3 neighbours only
+                                      (default: off)
+
+    TLS refinement (off unless given):
+      --tls                           TLS refinement with isotropic residual B; the groups come from
+                                      refine.tls.groups in --config, or from the input model (default:
+                                      off)
+      --tls_per_chain                 TLS refinement with one group per chain, if no groups are
+                                      defined (default: off)
+      --tls_file FILE                 TLS definition (yaml) from a previous run (PREFIX_tls.yaml) or
+                                      from 'util tls_select'; use it to continue after editing the
+                                      model (default: none)
+
+    Sequence annotation (off unless given):
+      --seq [FASTA ...]               Sequence file(s) in FASTA format: the best-matching sequence is
+                                      assigned to each protein, DNA and RNA chain for SEQRES and
+                                      label_seq_id, and residues that differ from it are reported
+                                      (default: none)
+
+    Additional inputs (off unless given):
+      --ligand [CIF ...]              Restraint dictionary file(s) for ligands that are not in the
+                                      monomer library (default: none)
+      --config YAML                   Configuration file with all refinement settings (default: none)
+      --keywords KEYWORD [KEYWORD ...]
+                                      REFMAC-style keyword(s), e.g. external restraints (default:
+                                      none)
+      --keyword_file FILE [FILE ...]  File(s) with REFMAC-style keywords (default: none)
+      --hklin_free FILE               MTZ file with the test-set flags (default: the flags are taken
+                                      from --hklin)
+      --labin_free COLUMN             Column of the flags in --hklin_free (default: auto)
+      --wavelength A                  Wavelength for anomalous scattering factors f', f'' (X-ray); 0:
+                                      ignore the wavelength in the file (default: from the data file
+                                      if present)
+
+    Advanced options (off unless given):
+      --prefer_intensity              When choosing the columns automatically, prefer intensities
+                                      (default: off)
+      --prefer_anomalous              When choosing the columns automatically, prefer Friedel pairs
+                                      (default: off)
+      --keep_entities                 Keep the entity and SEQRES information of the input (default:
+                                      off)
+      --keep_charges                  Use scattering factors of charged atoms (use with care)
+                                      (default: off)
+      --allow_unusual_occupancies     Allow negative occupancies or occupancies above 1 (default: off)
+      --newligand_continue            Make ad-hoc restraints for unknown ligands (not recommended)
+                                      (default: off)
+      --write_trajectory              Write the model of every cycle (default: off)
+      --vonmises                      Von Mises angle restraints (experimental) (default: off)
+      --use_fw                        Debugging: use French-Wilson amplitudes, but intensities for the
+                                      statistics (default: off)
+
+    Example: servalcat refine_xtal --model model.pdb --hklin data.mtz -o refined
+
+    $ servalcat util tls_select --help
+    usage: servalcat util tls_select --hklin FILE --model FILE [--monlib DIR] [options]
+
+    Select TLS groups automatically: divide every polymer chain into contiguous
+    segments and show how R-values depend on the number of groups. The model
+    should be an isotropic model refined with refine_xtal. The result is written
+    as yaml for 'refine_xtal --tls_file'. Data, model and restraint options are
+    those of refine_xtal.
+
+    help:
+      -h, --help                      show this help message and exit
+
+    Required arguments:
+      --hklin FILE                    Reflection data: MTZ or mmCIF structure factors, merged or
+                                      unmerged
+      --model FILE                    Atomic model: PDB or mmCIF (also small-molecule .res/.ins/.cif)
+      --monlib DIR                    Monomer library: directory with the CCP4 monomer cif
+                                      dictionaries (required unless the environment variable CLIBD_MON
+                                      is set) (default: $CLIBD_MON)
+
+    TLS selection: optional arguments with default values:
+      --max_groups N                  Largest number of groups per chain in the scan (default: 8)
+      --min_residues N                Smallest number of residues in a group (default: 10)
+      --tls_cycles N                  Cycles of the refinement (coordinates fixed) that evaluates each
+                                      number of groups (default: 8)
+      --min_delta X                   Smallest decrease of R that counts as an improvement (default:
+                                      0.001)
+      --tie X                         Jumps within this fraction of the biggest one are equivalent;
+                                      the lowest number of groups among them is chosen (default: 0.25)
+      -j, --jobs N                    Number of trial refinements run in parallel, each in its own
+                                      single-threaded process; the next one starts when one finishes.
+                                      Every process holds its own copy of the data, so use a smaller
+                                      number if memory is short; 1 = one after another (default: 0 =
+                                      all available CPUs)
+
+    TLS selection: options (off unless given):
+      --ngroups N | CHAIN:N [N | CHAIN:N ...]
+                                      Do not scan: use this number of groups in every polymer chain
+                                      (e.g. 4), or per chain (e.g. A:4 B:3; chains not given: 1). The
+                                      program finds the residue ranges (default: none: scan the number
+                                      of groups)
+      --no_eval                       With --ngroups: only determine the residue ranges, no refinement
+                                      for R-values (default: off)
+
+    Optional arguments with default values:
+      -s, --source {electron,xray,neutron,custom}
+                                      Radiation source (default: xray)
+      --labin COLUMNS                 MTZ columns of observations, sigmas and test flags, e.g.
+                                      FP,SIGFP,FreeR_flag or I,SIGI,FreeR_flag (default:
+                                      F,SIGF,FreeR_flag if present, otherwise chosen by column type)
+      --free N                        Value of the test-set flag (default: guessed from the flags)
+      -d, --d_min A                   High-resolution limit in Angstrom (default: all data)
+      --d_max A                       Low-resolution limit in Angstrom (default: all data)
+      --nbins N                       Number of resolution bins for statistics (default: auto)
+      --nbins_ml N                    Number of resolution bins for ML parameters (default: auto)
+      --use_in_est {all,work,test}    Reflections used to estimate the ML parameters (default: test;
+                                      work with --twin)
+      --weight W                      Weight of the geometry restraints relative to the data (default:
+                                      auto)
+      --hydrogen {all,yes,no}         all: add riding hydrogen atoms; yes: use hydrogen atoms if
+                                      present in the model; no: remove hydrogen atoms (default: all)
+      --adpr_weight W                 Weight of the ADP restraints (default: 1.0)
+      --occr_weight W                 Weight of the occupancy restraints (default: 0.0)
+      --adp_restraint_mode {diff,kldiv}
+                                      Type of the ADP restraint (default: kldiv)
+      --max_dist_for_adp_restraint A  Largest distance between atoms with an ADP restraint, in
+                                      Angstrom (default: 4.0)
+      --adp_restraint_power P         Power of the distance dependence of the ADP restraint weights
+                                      (default: 4)
+      --adp_restraint_exp_fac F       Factor in the exponent of the distance dependence of the ADP
+                                      restraint weights (default: 0.011271)
+      --jellybody_params SIGMA DMAX   Sigma and maximum distance of the jelly-body restraints, used
+                                      with --jellybody (default: [0.01, 4.2])
+      --seq_min_identity X            Fraction of the modelled residues that must agree with a
+                                      sequence for it to be assigned, used with --seq (default: 0.8)
+      -o, --output_prefix PREFIX      Prefix of the output files (default: <model name>_refined)
+
+    Refinement options (off unless given):
+      --refine_all_occ                Refine all occupancies (see docs/occ_refine.rst) (default: off)
+      --refine_h                      Refine hydrogen positions (otherwise restraints only) (default:
+                                      off)
+      --refine_dfrac                  Refine the deuterium fraction (neutron data only) (default: off)
+      --twin                          Twin refinement (default: off)
+      --twin_mlalpha                  Optimise the twin fractions by ML (default: off)
+      --unrestrained                  No geometry restraints (no monomer library needed) (default:
+                                      off)
+      --ncsr                          Local NCS restraints (default: off)
+      --jellybody                     Jelly-body restraints (default: off)
+      --jellyonly                     Jelly-body restraints instead of geometry restraints
+                                      (experimental) (default: off)
+      --adaptive_restraint ALPHA      Scale the target of bond, angle, plane, torsion and vdW
+                                      restraints by 1 + ALPHA * z^2 (default: off)
+      --no_solvent                    No bulk-solvent contribution (default: off)
+      --bfactor B                     Reset all atomic B-values to this value before refinement
+                                      (default: keep the B-values of the model)
+      --find_links                    Find and add links such as metal coordination (default: off)
+      --hout                          Write hydrogen atoms in the output model (default: off)
+      --adp_restraint_no_long_range   ADP restraints between bonded atoms and 1-3 neighbours only
+                                      (default: off)
+
+    Sequence annotation (off unless given):
+      --seq [FASTA ...]               Sequence file(s) in FASTA format: the best-matching sequence is
+                                      assigned to each protein, DNA and RNA chain for SEQRES and
+                                      label_seq_id, and residues that differ from it are reported
+                                      (default: none)
+
+    Additional inputs (off unless given):
+      --ligand [CIF ...]              Restraint dictionary file(s) for ligands that are not in the
+                                      monomer library (default: none)
+      --config YAML                   Configuration file with all refinement settings (default: none)
+      --keywords KEYWORD [KEYWORD ...]
+                                      REFMAC-style keyword(s), e.g. external restraints (default:
+                                      none)
+      --keyword_file FILE [FILE ...]  File(s) with REFMAC-style keywords (default: none)
+      --hklin_free FILE               MTZ file with the test-set flags (default: the flags are taken
+                                      from --hklin)
+      --labin_free COLUMN             Column of the flags in --hklin_free (default: auto)
+      --wavelength A                  Wavelength for anomalous scattering factors f', f'' (X-ray); 0:
+                                      ignore the wavelength in the file (default: from the data file
+                                      if present)
+
+    Advanced options (off unless given):
+      --prefer_intensity              When choosing the columns automatically, prefer intensities
+                                      (default: off)
+      --prefer_anomalous              When choosing the columns automatically, prefer Friedel pairs
+                                      (default: off)
+      --keep_entities                 Keep the entity and SEQRES information of the input (default:
+                                      off)
+      --keep_charges                  Use scattering factors of charged atoms (use with care)
+                                      (default: off)
+      --allow_unusual_occupancies     Allow negative occupancies or occupancies above 1 (default: off)
+      --newligand_continue            Make ad-hoc restraints for unknown ligands (not recommended)
+                                      (default: off)
+      --vonmises                      Von Mises angle restraints (experimental) (default: off)
+      --use_fw                        Debugging: use French-Wilson amplitudes, but intensities for the
+                                      statistics (default: off)
+
+    Example: servalcat util tls_select --model refined.pdb --hklin data.mtz -o tlssel
 
     $ servalcat --version
     Servalcat 0.4.123 with Python 3.9.18 (gemmi 0.7.3, scipy 1.7.3, numpy 1.19.5, pandas 1.3.5)

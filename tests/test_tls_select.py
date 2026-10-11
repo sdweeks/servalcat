@@ -209,6 +209,32 @@ class TestParallelHelpers(unittest.TestCase):
         self.assertNotIn("MKL_NUM_THREADS", os.environ)
         del os.environ["OMP_NUM_THREADS"]
 
+    def test_help_layout_and_defaults(self):
+        from servalcat.refine import refine_xtal
+        for mod in (refine_xtal, tls_select):
+            p = argparse.ArgumentParser(prog="servalcat test")
+            mod.add_arguments(p)
+            text = p.format_help()
+            self.assertIn("Required arguments:", text)
+            self.assertIn("Optional arguments with default values:", text)
+            self.assertIn("(off unless given):", text)
+            for act in p._actions:
+                if act.dest == "help" or act.help == argparse.SUPPRESS:
+                    continue
+                # every shown option states its default; required ones are in the required group
+                if not act.required:
+                    self.assertIn("(default:", act.help, act.dest)
+            self.assertIn("(default: xray)", text)
+            self.assertIn("(default: 10)", text) # --ncycle
+        # tls_select does not list options that it sets itself
+        p = argparse.ArgumentParser(prog="servalcat test")
+        tls_select.add_arguments(p)
+        shown = p.format_help()
+        for o in ("--ncycle", "--fix_xyz", "--tls ", "--tls_file", "--adp "):
+            self.assertNotIn("  " + o, shown)
+        self.assertIn("--max_groups", shown)
+        self.assertIn("--seq ", shown)
+
     def test_n_jobs(self):
         ns = argparse.Namespace
         self.assertEqual(tls_select.n_jobs(ns(jobs=4), 9), 4)

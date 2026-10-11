@@ -129,7 +129,10 @@ Ligands that are not in the monomer library need a restraint dictionary (e.g. fr
 
 ## 3. All options of `refine_xtal`
 
-`servalcat refine_xtal -h` prints the same list. Defaults are in parentheses. More detail:
+`servalcat refine_xtal -h` (and `servalcat util tls_select -h`) prints the options in three tiers: *required*
+arguments; *optional arguments with default values*; and *optional features that are off unless given* (refinement
+options, TLS, sequence annotation, additional inputs, advanced options). The default of every option is stated in
+its help line. The tables below are grouped by topic instead. Defaults are in parentheses. More detail:
 [`docs/xtal.rst`](docs/xtal.rst), [`docs/source.rst`](docs/source.rst), [`docs/hydrogen.rst`](docs/hydrogen.rst),
 [`docs/occ_refine.rst`](docs/occ_refine.rst) and [`docs/refmac_keywords.rst`](docs/refmac_keywords.rst).
 

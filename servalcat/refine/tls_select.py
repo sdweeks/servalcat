@@ -27,6 +27,7 @@ import csv
 import json
 import os
 import re
+import textwrap
 import time
 import types
 import numpy
@@ -39,34 +40,46 @@ from servalcat.refine import tls as tls_mod
 
 u_to_b = utils.model.u_to_b
 
+# options of refine_xtal that tls_select sets itself or does not use: not shown in its help
+_HIDDEN = ("ncycle", "fix_xyz", "tls", "tls_per_chain", "tls_file", "tls_ncycle", "write_trajectory",
+           "no_weight_adjust", "target_bond_rmsz_range", "adp", "randomize")
+
 def add_arguments(parser):
-    refine_xtal.add_arguments(parser)
-    parser.description = ("Select TLS groups automatically: divide every polymer chain into contiguous segments and "
-                          "show how R-values depend on the number of groups. The model should be an isotropic "
-                          "model refined with refine_xtal. The result is written as yaml for 'refine_xtal --tls_file'. "
-                          "Arguments for data and model are those of refine_xtal.")
-    g = parser.add_argument_group("TLS group selection")
-    g.add_argument("--ngroups", nargs="+", metavar="N | CHAIN:N",
-                   help="Do not scan: use this number of groups for every polymer chain (e.g. '4'), or per chain "
-                   "(e.g. 'A:4 B:3'; chains not given: 1). The residue ranges are determined by the program")
-    g.add_argument("--max_groups", type=int, default=8,
-                   help="Largest number of groups per chain in the scan (default: %(default)d)")
-    g.add_argument("--min_residues", type=int, default=10,
-                   help="Smallest number of residues in a group (default: %(default)d)")
-    g.add_argument("--tls_cycles", type=int, default=8,
-                   help="Cycles of the refinement (xyz fixed) used to evaluate each number of groups (default: %(default)d)")
-    g.add_argument("--min_delta", type=float, default=0.001,
-                   help="Smallest decrease of R that is considered an improvement (default: %(default)g)")
-    g.add_argument("--tie", type=float, default=0.25,
-                   help="Jumps within this fraction of the biggest one are considered equivalent; the lowest number "
-                   "of groups among them is chosen (default: %(default)g)")
-    g.add_argument("-j", "--jobs", type=int, default=0, metavar="N",
-                   help="Number of trial refinements to run in parallel, each in its own single-threaded process "
-                   "(default: 0 = number of CPUs available to the program). The next trial starts when one finishes. "
-                   "Every process holds its own copy of the data and restraints, so reduce this for large structures "
-                   "if memory is short; 1 runs the trials one after another")
-    g.add_argument("--no_eval", action="store_true",
-                   help="With --ngroups: only determine the residue ranges, do not refine to get R-values")
+    def own_options(parser):
+        add = refine_xtal._add
+        g = parser.add_argument_group("TLS selection: optional arguments with default values")
+        add(g, "--max_groups", type=int, default=8, metavar="N",
+            help="Largest number of groups per chain in the scan")
+        add(g, "--min_residues", type=int, default=10, metavar="N",
+            help="Smallest number of residues in a group")
+        add(g, "--tls_cycles", type=int, default=8, metavar="N",
+            help="Cycles of the refinement (coordinates fixed) that evaluates each number of groups")
+        add(g, "--min_delta", type=float, default=0.001, metavar="X",
+            help="Smallest decrease of R that counts as an improvement")
+        add(g, "--tie", type=float, default=0.25, metavar="X",
+            help="Jumps within this fraction of the biggest one are equivalent; the lowest number of groups "
+            "among them is chosen")
+        add(g, "-j", "--jobs", type=int, default=0, metavar="N", show="0 = all available CPUs",
+            help="Number of trial refinements run in parallel, each in its own single-threaded process; "
+            "the next one starts when one finishes. Every process holds its own copy of the data, so use a "
+            "smaller number if memory is short; 1 = one after another")
+        g = parser.add_argument_group("TLS selection: options (off unless given)")
+        add(g, "--ngroups", nargs="+", metavar="N | CHAIN:N", show="none: scan the number of groups",
+            help="Do not scan: use this number of groups in every polymer chain (e.g. 4), or per chain "
+            "(e.g. A:4 B:3; chains not given: 1). The program finds the residue ranges")
+        add(g, "--no_eval", action="store_true",
+            help="With --ngroups: only determine the residue ranges, no refinement for R-values")
+
+    refine_xtal.add_arguments(parser, after_required=own_options)
+    parser.description = textwrap.fill(
+        "Select TLS groups automatically: divide every polymer chain into contiguous segments and show how "
+        "R-values depend on the number of groups. The model should be an isotropic model refined with refine_xtal. "
+        "The result is written as yaml for 'refine_xtal --tls_file'. Data, model and restraint options are those "
+        "of refine_xtal.", 78)
+    parser.epilog = "Example: {} --model refined.pdb --hklin data.mtz -o tlssel".format(parser.prog)
+    for a in parser._actions:
+        if a.dest in _HIDDEN:
+            a.help = argparse.SUPPRESS
 # add_arguments()
 
 def set_prefix(args):

@@ -12,6 +12,8 @@ import pandas
 import os
 import shutil
 import argparse
+import functools
+import textwrap
 import types
 from servalcat.utils import logger
 from servalcat import utils
@@ -23,128 +25,163 @@ from servalcat.refmac import refmac_keywords
 from servalcat import ext
 b_to_u = utils.model.b_to_u
 
-def add_arguments(parser):
-    parser.description = "Restrained maximum-likelihood refinement of a crystallographic model against X-ray data " \
-        "(isotropic or anisotropic ADPs, optional TLS), without the refmac5 binary"
-    parser.add_argument("--hklin", required=True, help="Input reflection file (MTZ or mmCIF; merged or unmerged)")
-    parser.add_argument('--hklin_free',
-                        help='Input MTZ file for test flags')
-    parser.add_argument("-d", '--d_min', type=float, help="High-resolution cutoff (Angstrom)")
-    parser.add_argument('--d_max', type=float, help="Low-resolution cutoff (Angstrom)")
-    parser.add_argument('--nbins', type=int,
-                        help="Number of bins for statistics (default: auto)")
-    parser.add_argument('--nbins_ml', type=int,
-                        help="Number of bins for ML parameters (default: auto)")
-    parser.add_argument("--labin", help="Input columns, e.g. F,SIGF,FreeR_flag or I,SIGI,FreeR_flag. Default: F,SIGF,FreeR_flag if present, "
-                        "otherwise selected automatically by column type")
-    parser.add_argument('--labin_free',
-                        help='MTZ column of --hklin_free')
-    parser.add_argument('--labin_llweight',
-                        help=argparse.SUPPRESS) # testing
-    parser.add_argument('--free', type=int,
-                        help='flag number for test set')
-    parser.add_argument('--model', required=True,
-                        help='Input atomic model file')
-    parser.add_argument("--monlib",
-                        help="Monomer library path. Default: $CLIBD_MON")
-    parser.add_argument('--ligand', nargs="*", action="append",
-                        help="restraint dictionary cif file(s)")
-    parser.add_argument('--newligand_continue', action='store_true',
-                        help="Make ad-hoc restraints for unknown ligands (not recommended)")
-    parser.add_argument('--hydrogen', default="all", choices=["all", "yes", "no"],
-                        help="all: add riding hydrogen atoms, yes: use hydrogen atoms if present, no: remove hydrogen atoms in input. "
-                        "Default: %(default)s")
-    parser.add_argument('--hout', action='store_true', help="write hydrogen atoms in the output model")
-    parser.add_argument('--jellybody', action='store_true',
-                        help="Use jelly body restraints")
-    parser.add_argument('--jellybody_params', nargs=2, type=float,
-                        metavar=("sigma", "dmax"), default=[0.01, 4.2],
-                        help="Jelly body sigma and dmax (default: %(default)s)")
-    parser.add_argument('--jellyonly', action='store_true',
-                        help="Jelly body only (experimental, may not be useful)")
-    parser.add_argument('--find_links', action='store_true', 
-                        help='Automatically add links')
-    parser.add_argument('--keywords', nargs='+', action="append",
-                        help="refmac keyword(s)")
-    parser.add_argument('--keyword_file', nargs='+', action="append",
-                        help="refmac keyword file(s)")
-    parser.add_argument('--randomize', type=float, default=0,
-                        help='Shake coordinates with specified rmsd')
-    parser.add_argument('--ncycle', type=int, default=10,
-                        help="number of CG cycles (default: %(default)d)")
-    parser.add_argument('--weight', type=float,
-                        help="refinement weight (default: auto)")
-    parser.add_argument('--no_weight_adjust', action='store_true', 
-                        help='Do not adjust weight during refinement')
-    parser.add_argument('--target_bond_rmsz_range', nargs=2, type=float, default=[0.5, 1.],
-                        help='Bond rmsz range for weight adjustment (default: %(default)s)')
-    parser.add_argument('--ncsr', action='store_true', 
-                        help='Use local NCS restraints')
-    parser.add_argument('--adpr_weight', type=float, default=1.,
-                        help="ADP restraint weight (default: %(default)f)")
-    parser.add_argument('--occr_weight', type=float, default=0.,
-                        help="Occupancy restraint weight (default: %(default)f)")
-    parser.add_argument('--adaptive_restraint', type=float, metavar="ALPHA",
-                        help='Scale target by (1 + ALPHA * z^2). Only applies to bond, angle, plane, torsion, and vdw.')
-    parser.add_argument('--bfactor', type=float,
-                        help="reset all atomic B values to specified value")
-    parser.add_argument('--fix_xyz', action="store_true", help="Do not refine coordinates")
-    parser.add_argument('--adp',  choices=["fix", "iso", "aniso"], default="iso",
-                        help="ADP model (default: %(default)s). With --tls the residual B stays isotropic")
-    parser.add_argument('--refine_all_occ', action="store_true", help="Refine all occupancies (see docs/occ_refine.rst)")
-    parser.add_argument('--max_dist_for_adp_restraint', type=float, default=4.,
-                        help="Maximum distance for ADP restraints (default: %(default)s)")
-    parser.add_argument('--adp_restraint_power', type=float, help="Power of the distance dependence of ADP restraint weights")
-    parser.add_argument('--adp_restraint_exp_fac', type=float, help="Exponential factor of the distance dependence of ADP restraint weights")
-    parser.add_argument('--adp_restraint_no_long_range', action='store_true', help="Restrain ADPs of bonded and 1-3 neighbours only")
-    parser.add_argument('--adp_restraint_mode', choices=["diff", "kldiv"], default="kldiv",
-                        help="ADP restraint type (default: %(default)s)")
-    parser.add_argument('--unrestrained',  action='store_true', help="No positional restraints")
-    parser.add_argument('--refine_h', action="store_true", help="Refine hydrogen (default: restraints only)")
-    parser.add_argument('--tls', action="store_true",
-                        help="TLS refinement (with isotropic residual B). TLS groups are taken from refine.tls.groups "
-                        "in the config file, or from the input model")
-    parser.add_argument('--tls_per_chain', action="store_true",
-                        help="TLS refinement with one TLS group per chain (when no groups are defined)")
-    parser.add_argument('--tls_file',
-                        help="TLS definition (yaml; groups, optionally with starting T, L, S) such as prefix_tls.yaml "
-                        "written by a previous run or by 'util tls_select'. Use it to continue after editing the model")
-    parser.add_argument('--tls_ncycle', type=int,
-                        help="Number of TLS steps per refinement cycle (default: 1)")
-    parser.add_argument('--refine_dfrac', action="store_true", help="Refine deuterium fraction (neutron only)")
-    parser.add_argument('--twin', action="store_true", help="Turn on twin refinement")
-    parser.add_argument('--twin_mlalpha', action="store_true", help="Use ML optimisation for twin fractions")
-    parser.add_argument("-s", "--source", choices=["electron", "xray", "neutron", "custom"], default="xray",
-                        help="Radiation source (default: %(default)s)")
-    parser.add_argument("--wavelength", type=float, help="For f_prime")
-    parser.add_argument('--no_solvent',  action='store_true',
-                        help="Do not consider bulk solvent contribution")
-    parser.add_argument("--non_binary_solvent_mask", action='store_true',
-                        help=argparse.SUPPRESS) # experimental
-    parser.add_argument('--use_in_est', choices=["all", "work", "test"],
-                        help="Which set of reflections to use for the ML parameter estimation. Default: 'work' if --twin is set; otherwise 'test'.")
-    parser.add_argument('--keep_charges',  action='store_true',
-                        help="Use scattering factor for charged atoms. Use it with care.")
-    parser.add_argument("--keep_entities", action='store_true',
-                        help="Do not override entities")
-    parser.add_argument("--seq", nargs="*", action="append", metavar="FASTA",
-                        help="Sequence file(s) (FASTA). The best matching sequence is assigned to each protein/DNA/RNA chain; "
-                        "it is used for SEQRES and label_seq_id (unmodelled residues/gaps), and residues that differ from it are reported")
-    parser.add_argument("--seq_min_identity", type=float, default=0.8,
-                        help="Minimum fraction of modelled residues that agree with a sequence for it to be assigned (default: %(default)s)")
-    parser.add_argument('--allow_unusual_occupancies', action="store_true", help="Allow negative or more than one occupancies")
-    parser.add_argument('-o','--output_prefix', help="Prefix of output files (default: derived from the model name)")
-    parser.add_argument("--write_trajectory", action='store_true',
-                        help="Write all output from cycles")
-    parser.add_argument("--vonmises", action='store_true',
-                        help="Experimental: von Mises type restraint for angles")
-    parser.add_argument("--prefer_intensity", action='store_true', help="When columns are selected automatically, prefer intensities over amplitudes")
-    parser.add_argument("--prefer_anomalous", action='store_true', help="When columns are selected automatically, prefer Friedel-pair columns")
-    parser.add_argument("--use_fw", action='store_true',
-                        help="For debugging purpose; use F&W-converted amplitudes but use intensity for stats")
-    parser.add_argument('--robust_function', help=argparse.SUPPRESS) # testing
-    parser.add_argument("--config",
-                        help="Config file (.yaml)")
+def _add(group, *names, show=None, **kw):
+    """add_argument whose help always ends with the default. show: text of the default if it is not simply the
+    argparse default (e.g. 'auto'); flags (store_true) show 'off'; '' adds nothing (required arguments)."""
+    h = kw.get("help")
+    if h and h is not argparse.SUPPRESS and show != "":
+        if show is None:
+            if kw.get("action") == "store_true": show = "off"
+            elif kw.get("default") is not None: show = "%(default)s"
+            else: show = "none"
+        kw["help"] = "{} (default: {})".format(h, show)
+    return group.add_argument(*names, **kw)
+
+def add_arguments(parser, after_required=None):
+    """Arguments are in three tiers: (1) required, (2) optional with default values, (3) optional features that are
+    off unless given. after_required(parser): called before tiers 2 and 3 so that a program built on this one
+    (tls_select) can list its own options first."""
+    parser.description = textwrap.fill("Restrained maximum-likelihood refinement of a crystallographic model against "
+                                       "X-ray data (isotropic or anisotropic ADPs, optional TLS), without the refmac5 "
+                                       "binary.", 78)
+    parser.usage = "{} --hklin FILE --model FILE [--monlib DIR] [options]".format(parser.prog)
+    parser.epilog = "Example: {} --model model.pdb --hklin data.mtz -o refined".format(parser.prog)
+    parser.formatter_class = functools.partial(argparse.RawDescriptionHelpFormatter, max_help_position=34)
+    if hasattr(parser, "_optionals"):
+        parser._optionals.title = "help"
+
+    # (1) required
+    g = parser.add_argument_group("Required arguments")
+    _add(g, "--hklin", required=True, metavar="FILE", show="",
+         help="Reflection data: MTZ or mmCIF structure factors, merged or unmerged")
+    _add(g, "--model", required=True, metavar="FILE", show="",
+         help="Atomic model: PDB or mmCIF (also small-molecule .res/.ins/.cif)")
+    _add(g, "--monlib", metavar="DIR", show="$CLIBD_MON",
+         help="Monomer library: directory with the CCP4 monomer cif dictionaries (required unless the "
+         "environment variable CLIBD_MON is set)")
+    if after_required:
+        after_required(parser)
+
+    # (2) optional, with default values
+    g = parser.add_argument_group("Optional arguments with default values")
+    _add(g, "-s", "--source", choices=["electron", "xray", "neutron", "custom"], default="xray",
+         help="Radiation source")
+    _add(g, "--labin", metavar="COLUMNS", show="F,SIGF,FreeR_flag if present, otherwise chosen by column type",
+         help="MTZ columns of observations, sigmas and test flags, e.g. FP,SIGFP,FreeR_flag or I,SIGI,FreeR_flag")
+    _add(g, "--free", type=int, metavar="N", show="guessed from the flags",
+         help="Value of the test-set flag")
+    _add(g, "-d", "--d_min", type=float, metavar="A", show="all data",
+         help="High-resolution limit in Angstrom")
+    _add(g, "--d_max", type=float, metavar="A", show="all data",
+         help="Low-resolution limit in Angstrom")
+    _add(g, "--nbins", type=int, metavar="N", show="auto",
+         help="Number of resolution bins for statistics")
+    _add(g, "--nbins_ml", type=int, metavar="N", show="auto",
+         help="Number of resolution bins for ML parameters")
+    _add(g, "--use_in_est", choices=["all", "work", "test"], show="test; work with --twin",
+         help="Reflections used to estimate the ML parameters")
+    _add(g, "--ncycle", type=int, default=10, metavar="N",
+         help="Number of refinement cycles")
+    _add(g, "--adp", choices=["fix", "iso", "aniso"], default="iso",
+         help="ADP model; with --tls the residual B stays isotropic")
+    _add(g, "--weight", type=float, metavar="W", show="auto",
+         help="Weight of the geometry restraints relative to the data")
+    _add(g, "--target_bond_rmsz_range", nargs=2, type=float, default=[0.5, 1.], metavar=("MIN", "MAX"),
+         help="Bond rmsZ range that the automatic weight adjustment aims for")
+    _add(g, "--hydrogen", default="all", choices=["all", "yes", "no"],
+         help="all: add riding hydrogen atoms; yes: use hydrogen atoms if present in the model; "
+         "no: remove hydrogen atoms")
+    _add(g, "--adpr_weight", type=float, default=1., metavar="W",
+         help="Weight of the ADP restraints")
+    _add(g, "--occr_weight", type=float, default=0., metavar="W",
+         help="Weight of the occupancy restraints")
+    _add(g, "--adp_restraint_mode", choices=["diff", "kldiv"], default="kldiv",
+         help="Type of the ADP restraint")
+    _add(g, "--max_dist_for_adp_restraint", type=float, default=4., metavar="A",
+         help="Largest distance between atoms with an ADP restraint, in Angstrom")
+    _add(g, "--adp_restraint_power", type=float, metavar="P", show="4",
+         help="Power of the distance dependence of the ADP restraint weights")
+    _add(g, "--adp_restraint_exp_fac", type=float, metavar="F", show="0.011271",
+         help="Factor in the exponent of the distance dependence of the ADP restraint weights")
+    _add(g, "--jellybody_params", nargs=2, type=float, metavar=("SIGMA", "DMAX"), default=[0.01, 4.2],
+         help="Sigma and maximum distance of the jelly-body restraints, used with --jellybody")
+    _add(g, "--tls_ncycle", type=int, metavar="N", show="1",
+         help="Number of TLS steps in each refinement cycle, used with --tls")
+    _add(g, "--seq_min_identity", type=float, default=0.8, metavar="X",
+         help="Fraction of the modelled residues that must agree with a sequence for it to be assigned, "
+         "used with --seq")
+    _add(g, "--randomize", type=float, default=0, metavar="RMSD", show="0, no shaking",
+         help="Shake the coordinates with this rmsd in Angstrom before refinement")
+    _add(g, "-o", "--output_prefix", metavar="PREFIX", show="<model name>_refined",
+         help="Prefix of the output files")
+
+    # (3) optional features, off unless given
+    g = parser.add_argument_group("Refinement options (off unless given)")
+    _add(g, "--fix_xyz", action="store_true", help="Do not refine the coordinates")
+    _add(g, "--refine_all_occ", action="store_true", help="Refine all occupancies (see docs/occ_refine.rst)")
+    _add(g, "--refine_h", action="store_true", help="Refine hydrogen positions (otherwise restraints only)")
+    _add(g, "--refine_dfrac", action="store_true", help="Refine the deuterium fraction (neutron data only)")
+    _add(g, "--twin", action="store_true", help="Twin refinement")
+    _add(g, "--twin_mlalpha", action="store_true", help="Optimise the twin fractions by ML")
+    _add(g, "--unrestrained", action="store_true", help="No geometry restraints (no monomer library needed)")
+    _add(g, "--ncsr", action="store_true", help="Local NCS restraints")
+    _add(g, "--jellybody", action="store_true", help="Jelly-body restraints")
+    _add(g, "--jellyonly", action="store_true", help="Jelly-body restraints instead of geometry restraints (experimental)")
+    _add(g, "--adaptive_restraint", type=float, metavar="ALPHA", show="off",
+         help="Scale the target of bond, angle, plane, torsion and vdW restraints by 1 + ALPHA * z^2")
+    _add(g, "--no_weight_adjust", action="store_true", help="Do not adjust the restraint weight during refinement")
+    _add(g, "--no_solvent", action="store_true", help="No bulk-solvent contribution")
+    _add(g, "--bfactor", type=float, metavar="B", show="keep the B-values of the model",
+         help="Reset all atomic B-values to this value before refinement")
+    _add(g, "--find_links", action="store_true", help="Find and add links such as metal coordination")
+    _add(g, "--hout", action="store_true", help="Write hydrogen atoms in the output model")
+    _add(g, "--adp_restraint_no_long_range", action="store_true",
+         help="ADP restraints between bonded atoms and 1-3 neighbours only")
+
+    g = parser.add_argument_group("TLS refinement (off unless given)")
+    _add(g, "--tls", action="store_true",
+         help="TLS refinement with isotropic residual B; the groups come from refine.tls.groups in --config, "
+         "or from the input model")
+    _add(g, "--tls_per_chain", action="store_true", help="TLS refinement with one group per chain, if no groups are defined")
+    _add(g, "--tls_file", metavar="FILE", show="none",
+         help="TLS definition (yaml) from a previous run (PREFIX_tls.yaml) or from 'util tls_select'; "
+         "use it to continue after editing the model")
+
+    g = parser.add_argument_group("Sequence annotation (off unless given)")
+    _add(g, "--seq", nargs="*", action="append", metavar="FASTA", show="none",
+         help="Sequence file(s) in FASTA format: the best-matching sequence is assigned to each protein, DNA and RNA "
+         "chain for SEQRES and label_seq_id, and residues that differ from it are reported")
+
+    g = parser.add_argument_group("Additional inputs (off unless given)")
+    _add(g, "--ligand", nargs="*", action="append", metavar="CIF", show="none",
+         help="Restraint dictionary file(s) for ligands that are not in the monomer library")
+    _add(g, "--config", metavar="YAML", show="none", help="Configuration file with all refinement settings")
+    _add(g, "--keywords", nargs="+", action="append", metavar="KEYWORD", show="none",
+         help="REFMAC-style keyword(s), e.g. external restraints")
+    _add(g, "--keyword_file", nargs="+", action="append", metavar="FILE", show="none",
+         help="File(s) with REFMAC-style keywords")
+    _add(g, "--hklin_free", metavar="FILE", show="the flags are taken from --hklin",
+         help="MTZ file with the test-set flags")
+    _add(g, "--labin_free", metavar="COLUMN", show="auto", help="Column of the flags in --hklin_free")
+    _add(g, "--wavelength", type=float, metavar="A", show="from the data file if present",
+         help="Wavelength for anomalous scattering factors f', f'' (X-ray); 0: ignore the wavelength in the file")
+
+    g = parser.add_argument_group("Advanced options (off unless given)")
+    _add(g, "--prefer_intensity", action="store_true", help="When choosing the columns automatically, prefer intensities")
+    _add(g, "--prefer_anomalous", action="store_true", help="When choosing the columns automatically, prefer Friedel pairs")
+    _add(g, "--keep_entities", action="store_true", help="Keep the entity and SEQRES information of the input")
+    _add(g, "--keep_charges", action="store_true", help="Use scattering factors of charged atoms (use with care)")
+    _add(g, "--allow_unusual_occupancies", action="store_true", help="Allow negative occupancies or occupancies above 1")
+    _add(g, "--newligand_continue", action="store_true",
+         help="Make ad-hoc restraints for unknown ligands (not recommended)")
+    _add(g, "--write_trajectory", action="store_true", help="Write the model of every cycle")
+    _add(g, "--vonmises", action="store_true", help="Von Mises angle restraints (experimental)")
+    _add(g, "--use_fw", action="store_true",
+         help="Debugging: use French-Wilson amplitudes, but intensities for the statistics")
+    # not shown: testing options
+    parser.add_argument('--labin_llweight', help=argparse.SUPPRESS)
+    parser.add_argument("--non_binary_solvent_mask", action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--robust_function', help=argparse.SUPPRESS)
 # add_arguments()
 
 def parse_args(arg_list):
