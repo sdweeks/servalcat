@@ -45,7 +45,9 @@ _HIDDEN = ("ncycle", "fix_xyz", "tls", "tls_per_chain", "tls_file", "tls_ncycle"
            "no_weight_adjust", "target_bond_rmsz_range", "adp", "randomize", "refine_occ", "occ_waters",
            "occ_adpr_weight")
 
-def add_arguments(parser):
+def add_arguments(parser, method="likelihood"):
+    bfit = method == "bfactor"
+
     def own_options(parser):
         add = utils.cli.add_arg
         g = parser.add_argument_group("TLS selection: optional arguments with default values")
@@ -60,6 +62,17 @@ def add_arguments(parser):
         add(g, "--tie", type=float, default=0.25, metavar="X",
             help="Jumps within this fraction of the biggest one are equivalent; the lowest number of groups "
             "among them is chosen")
+        if bfit:
+            add(g, "--atoms", choices=list(ATOM_SETS), default="all",
+                help="Atoms whose B-factors are fitted: all heavy atoms; main: main-chain (and sugar-phosphate) atoms; "
+                "ca: C-alpha / P atoms (then groups need more residues)")
+            add(g, "--max_boundaries", type=int, default=400, metavar="N",
+                help="Largest number of positions where a chain may be cut. Chains with more residues are cut only at "
+                "every k-th residue; with every residue the fit is done for every possible segment (about 1 ms per "
+                "segment: 300 residues take about 1 minute)")
+            add(g, "--min_gain", type=float, default=0.05, metavar="X",
+                help="Without refinement (no --hklin): the number of groups is the smallest N for which one more group "
+                "lowers the residual of the B-factor fit by less than this fraction")
         add(g, "-j", "--jobs", type=int, default=0, metavar="N", show="0 = all available CPUs",
             help="Number of trial refinements run in parallel, each in its own single-threaded process; "
             "the next one starts when one finishes. Every process holds its own copy of the data, so use a "
@@ -69,9 +82,25 @@ def add_arguments(parser):
             help="Do not scan: use this number of groups in every polymer chain (e.g. 4), or per chain "
             "(e.g. A:4 B:3; chains not given: 1). The program finds the residue ranges")
         add(g, "--no_eval", action="store_true",
-            help="With --ngroups: only determine the residue ranges, no refinement for R-values")
+            help=("Do not refine to get R-values (always so without --hklin): only the fit of the B-factors" if bfit else
+                  "With --ngroups: only determine the residue ranges, no refinement for R-values"))
 
-    refine_xtal.add_arguments(parser, after_required=own_options)
+    refine_xtal.add_arguments(parser, after_required=own_options, hklin_required=not bfit)
+    if bfit:
+        parser.usage = "{} --model FILE [--hklin FILE] [options]".format(parser.prog)
+        parser.description = textwrap.fill(
+            "Select TLS groups from the B-factors of a model, in the spirit of TLSMD: every polymer chain is divided "
+            "into contiguous segments, a TLS model is fitted by least squares to the isotropic B-factors of each "
+            "segment, and the division with the smallest residual is found for every number of groups. The model "
+            "should have been refined WITHOUT TLS, so that its B-factors contain the motion. Without --hklin only this "
+            "fit is done (no reflection data or monomer library needed). With --hklin every number of groups is also "
+            "tested by refinement and R-values are reported, as 'util tls_select' does. The result is written as yaml "
+            "for 'refine_xtal --tls_file'.", 78)
+        parser.epilog = "Example: {} --model refined.pdb -o tlsbfit".format(parser.prog)
+        for a in parser._actions:
+            if a.dest in _HIDDEN:
+                a.help = argparse.SUPPRESS
+        return
     parser.description = textwrap.fill(
         "Select TLS groups automatically: divide every polymer chain into contiguous segments and show how "
         "R-values depend on the number of groups. The model should be an isotropic model refined with refine_xtal. "
@@ -85,7 +114,8 @@ def add_arguments(parser):
 
 def set_prefix(args):
     if not args.output_prefix:
-        args.output_prefix = utils.fileio.splitext(os.path.basename(args.model))[0] + "_tlsselect"
+        args.output_prefix = utils.fileio.splitext(os.path.basename(args.model))[0] + \
+                             ("_tlsbfit" if getattr(args, "method", "likelihood") == "bfactor" else "_tlsselect")
 
 # ---------------------------------------------------------------------------------------------------
 # dynamic programming
@@ -178,6 +208,108 @@ class ChainGain:
             for t in range(s + 1, m):
                 G[s, t] = self.gain(bounds[s], bounds[t])
         return G
+
+
+class ChainBFit:
+    """Least-squares fit of a TLS model to the isotropic B-factors of the atoms of a segment of consecutive residues
+    (the idea of TLSMD: the B-factors of a model describe what the TLS groups would have to explain). The isotropic B
+    of an atom is u_to_b * trace(U_TLS) / 3, linear in the 20 TLS parameters. Normal equations are accumulated per
+    residue (prefix sums, about one origin) and moved to the centre of the segment (an exact linear transformation of the
+    parameters, as in ChainGain); the minimum of sum (B_obs - B_TLS)^2 follows from the normal equations. Only the
+    residual is needed, so the parameters that an isotropic B cannot determine do not matter. The fit is unconstrained
+    (T and L are not forced to be positive semi-definite); the refinement that follows is."""
+    def __init__(self, res_index, pos, b, n_res):
+        self.n_res = n_res
+        self.origin = pos.mean(axis=0)
+        J = tls_mod.tls_jacobian(pos - self.origin) @ tls_mod._P # (N, 6, 20)
+        X = u_to_b * (J[:, 0] + J[:, 1] + J[:, 2]) / 3.           # (N, 20): B of the atom per TLS parameter
+        Ha = numpy.einsum("np,nq->npq", X, X)
+        ga = X * b[:, None]
+        self.ph = numpy.zeros((n_res + 1, tls_mod.NPAR, tls_mod.NPAR))
+        self.pg = numpy.zeros((n_res + 1, tls_mod.NPAR))
+        self.pyy = numpy.zeros(n_res + 1)
+        self.pn = numpy.zeros(n_res + 1)
+        self.pp = numpy.zeros((n_res + 1, 3))
+        for r in range(n_res):
+            sel = res_index == r
+            self.ph[r + 1] = self.ph[r] + Ha[sel].sum(axis=0)
+            self.pg[r + 1] = self.pg[r] + ga[sel].sum(axis=0)
+            self.pyy[r + 1] = self.pyy[r] + (b[sel] ** 2).sum()
+            self.pn[r + 1] = self.pn[r] + sel.sum()
+            self.pp[r + 1] = self.pp[r] + pos[sel].sum(axis=0)
+        self.pts = numpy.random.default_rng(0).normal(size=(60, 3)) * 12.
+
+    def residual(self, i, j):
+        """sum of squares of B_obs - B_TLS for residues i .. j-1 after the best fit"""
+        n = self.pn[j] - self.pn[i]
+        if n <= 0:
+            return 0.
+        o_seg = (self.pp[j] - self.pp[i]) / n
+        M = tls_mod.origin_shift_matrix(o_seg, self.origin, self.pts + o_seg)
+        g = M.T @ (self.pg[j] - self.pg[i])
+        H = M.T @ (self.ph[j] - self.ph[i]) @ M
+        d = numpy.sqrt(numpy.maximum(numpy.diag(H), 1e-30))
+        Hs, gs = H / d[:, None] / d[None, :], g / d
+        w, V = numpy.linalg.eigh(Hs)
+        keep = w > 1e-9 * w.max()                     # the combinations that the isotropic B determines
+        c = V[:, keep].T @ gs
+        return float(max(self.pyy[j] - self.pyy[i] - numpy.sum(c * c / w[keep]), 0.))
+
+    def gain_matrix(self, bounds):
+        """minus the residual of every segment, so that the division with the largest total is the best fit"""
+        m = len(bounds)
+        G = numpy.full((m, m), -numpy.inf)
+        for s in range(m):
+            for t in range(s + 1, m):
+                G[s, t] = -self.residual(bounds[s], bounds[t])
+        return G
+
+ATOM_SETS = {"all": None, "main": ("N", "CA", "C", "O", "P", "OP1", "OP2", "O5'", "C5'", "C4'", "C3'", "O3'"), "ca": ("CA", "P")}
+
+def partitions_by_bfactor(chains, args):
+    """best divisions of every chain for each k by the B-factor fit. Returns {chain name: {k: (-residual, bounds)}};
+    also stores the number of atoms of each chain in args._bfit_atoms"""
+    names = ATOM_SETS[args.atoms]
+    ret, natoms = {}, {}
+    for c in chains:
+        res_index, pos, b = [], [], []
+        for i, r in enumerate(c.residues):
+            for a in r:
+                if a.is_hydrogen() or a.occ <= 0 or (names is not None and a.name not in names):
+                    continue
+                res_index.append(i)
+                pos.append([a.pos.x, a.pos.y, a.pos.z])
+                b.append(a.b_iso)
+        res_index, pos, b = numpy.array(res_index), numpy.array(pos), numpy.array(b)
+        natoms[c.name] = len(b)
+        # about 10 parameters can be determined from isotropic B: a segment needs clearly more atoms than that
+        per_res = max(1., len(b) / c.n)
+        min_res = max(args.min_residues, int(numpy.ceil(25. / per_res)))
+        if min_res > args.min_residues:
+            logger.writeln(f"Chain {c.name}: with the atoms chosen ({args.atoms}) a group needs at least {min_res} residues")
+        cf = ChainBFit(res_index, pos, b, c.n)
+        max_b = getattr(args, "max_boundaries", 400)
+        bounds = candidate_boundaries(c.n, max_b) # every residue as a possible cut, unless the chain is very long
+        if len(bounds) < c.n + 1:
+            logger.writeln(f"Chain {c.name}: cuts only at every {bounds[1] - bounds[0]}th residue (--max_boundaries {max_b})")
+        kmax = min(args.max_groups, c.n // min_res)
+        t0 = time.time()
+        ret[c.name] = best_partitions(cf.gain_matrix(bounds), bounds, min_res, kmax)
+        logger.writeln(f"Chain {c.name}: {c.n} residues, {len(b)} atoms in the fit, best divisions for up to "
+                       f"{max(ret[c.name])} groups ({time.time() - t0:.1f} s)")
+    args._bfit_atoms = natoms
+    return ret
+
+def choose_n_elbow(chi2, min_gain=0.05):
+    """chi2[i]: residual of the B-factor fit with i+1 groups per chain. Returns (N, explanation): the smallest N after
+    which one more group lowers the residual by less than min_gain (relative)"""
+    K = len(chi2)
+    for n in range(1, K):
+        drop = (chi2[n - 1] - chi2[n]) / chi2[n - 1] if chi2[n - 1] > 0 else 0.
+        if drop < min_gain:
+            return n, (f"going from {n} to {n + 1} groups lowers the residual of the B-factor fit by only {100 * drop:.1f}% "
+                       f"(< {100 * min_gain:g}%)")
+    return K, f"the residual was still falling by {min_gain:g} or more per group at the largest number of groups evaluated"
 
 # ---------------------------------------------------------------------------------------------------
 # selection rule
@@ -410,21 +542,87 @@ def ascii_chart(rows, key, width=40):
         lines.append(f" {r['N']:3d} {r[key]:.4f} " + "#" * n)
     return "\n".join(lines)
 
+def finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_total, t_start, config_for_n, show_ranges):
+    """Table, graph and recommendation of the B-factor fit alone (no refinement)"""
+    rows = []
+    for n, _ in configs:
+        chi2 = max(-preds[n], 0.)
+        rows.append({"N": n, "groups": ngroups_n[n], "params": tls_mod.NPAR * ngroups_n[n], "B_chi2": chi2,
+                     "B_rms": float(numpy.sqrt(chi2 / natoms_total))})
+    for i, r in enumerate(rows):
+        r["drop_pct"] = 100. * (rows[i - 1]["B_chi2"] - r["B_chi2"]) / rows[i - 1]["B_chi2"] if i > 0 and rows[i - 1]["B_chi2"] > 0 else float("nan")
+    best, why = choose_n_elbow([r["B_chi2"] for r in rows], args.min_gain)
+    for r in rows:
+        r["selected"] = r["N"] == best
+    df = pandas.DataFrame(rows)
+    df.to_csv(prefix + "_scan.csv", index=False)
+    with open(prefix + "_scan.json", "w") as ofs:
+        json.dump({"rows": rows, "selected_N": best, "reason": why, "metric": "B_rms",
+                   "partitions": {str(n): {c: [[tls_mod._seqid_str(a), tls_mod._seqid_str(b)] for a, b in r]
+                                           for c, r in d.items()} for n, d in descs.items()}}, ofs, indent=2, default=float)
+    logger.writeln("\n" + "=" * 70)
+    logger.writeln(f"Fit of TLS to the isotropic B-factors ({args.atoms} atoms) vs the number of groups per chain")
+    logger.writeln("B_rms: r.m.s. of B_obs - B_TLS in A^2; drop: decrease of the residual from N-1 to N groups")
+    logger.writeln(df[["N", "groups", "params", "B_rms", "B_chi2", "drop_pct", "selected"]].to_string(
+        index=False, float_format=lambda x: f"{x:.3f}" if abs(x) < 100 else f"{x:.1f}"))
+    logger.writeln("\nB_rms vs N:")
+    logger.writeln(ascii_chart(rows, "B_rms"))
+    try: # optional
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(5, 3.5))
+        ax.plot(df.N, df.B_rms, "o-")
+        ax.axvline(best, color="gray", ls="--", lw=0.8)
+        ax.set_xlabel("TLS groups per chain")
+        ax.set_ylabel("r.m.s. of B(obs) - B(TLS) (A$^2$)")
+        fig.tight_layout()
+        fig.savefig(prefix + "_scan.png", dpi=150)
+        plt.close(fig)
+        logger.writeln(f"Plot written: {prefix}_scan.png")
+    except ImportError:
+        pass
+    logger.writeln("\n" + "=" * 70)
+    groups, desc, _ = config_for_n(best)
+    logger.writeln(f"Recommendation: {best} group(s) per chain. {why}")
+    logger.writeln("  NOTE: a fit to B-factors always improves with more groups. This is a rule of thumb, not a test:"
+                   "\n  give --hklin to compare R-free for each number of groups")
+    show_ranges(desc)
+    write_yaml(prefix + "_tls.yaml", groups)
+    logger.writeln(f"\nTLS definition written: {prefix}_tls.yaml\n  use it with: refine_xtal --tls_file {prefix}_tls.yaml\n"
+                   f"  (other numbers of groups: {prefix}_tls_N*.yaml; the number can be forced with --ngroups)")
+    logger.writeln(f"Table: {prefix}_scan.csv, {prefix}_scan.json    total time {time.time() - t_start:.0f} s")
+
 def main(args):
     set_prefix(args)
+    method = getattr(args, "method", "likelihood")
+    if method == "bfactor" and not args.hklin:
+        args.no_eval = True # nothing to refine against
+    data_free = method == "bfactor" and args.no_eval
     args0 = copy.deepcopy(args)
-    logger.writeln("Preparing the model and data..")
-    ctx = refine_xtal.setup(args, use_tls=False)
-    ll = ctx.ll
-    ll.update_fc()
-    ll.overall_scale()
-    ll.update_ml_params()
-    ll.prepare_target()
-    chains = polymer_chains(ctx.st, args.min_residues)
+    if data_free:
+        logger.writeln("Reading the model..")
+        st = utils.fileio.read_structure(args.model)
+        st.setup_entities()
+    else:
+        logger.writeln("Preparing the model and data..")
+        ctx = refine_xtal.setup(args, use_tls=False)
+        st = ctx.st
+        if method == "likelihood":
+            ll = ctx.ll
+            ll.update_fc()
+            ll.overall_scale()
+            ll.update_ml_params()
+            ll.prepare_target()
+    chains = polymer_chains(st, args.min_residues)
     if not chains:
         raise SystemExit("Error: no polymer chain with enough residues")
     logger.writeln("Polymer chains: " + ", ".join(f"{c.name} ({c.n} residues)" for c in chains) + "\n")
-    parts = partitions_for_chains(ctx, chains, args)
+    if method == "bfactor":
+        parts = partitions_by_bfactor(chains, args)
+        natoms_total = sum(args._bfit_atoms.values())
+    else:
+        parts = partitions_for_chains(ctx, chains, args)
     prefix = args.output_prefix
     trial_dir = prefix + "_trials" # files written by the trial refinements
     os.makedirs(trial_dir, exist_ok=True)
@@ -482,8 +680,11 @@ def main(args):
             break
         configs.append((n, counts))
         prev = counts
-    logger.writeln(f"\nScanning 0 .. {configs[-1][0]} groups per chain; each evaluated by {args.tls_cycles} cycles of refinement "
-                   "(xyz fixed, residual B + TLS)")
+    if method == "bfactor" and args.no_eval:
+        logger.writeln(f"\nScanning 1 .. {configs[-1][0]} groups per chain (fit of the B-factors only, no refinement)")
+    else:
+        logger.writeln(f"\nScanning 0 .. {configs[-1][0]} groups per chain; each evaluated by {args.tls_cycles} cycles of refinement "
+                       "(xyz fixed, residual B + TLS)")
     descs, preds, ngroups_n, specs = {}, {}, {}, []
     for n, counts in configs:
         groups, desc, pred = config_for(counts)
@@ -491,6 +692,10 @@ def main(args):
         write_yaml(yaml_n, groups)
         descs[n], preds[n], ngroups_n[n] = desc, pred, len(groups)
         specs.append((n, yaml_n, f"{trial_dir}/n{n}"))
+    if method == "bfactor" and args.no_eval:
+        finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_total, t_start,
+                            lambda n: config_for(dict(configs)[n]), show_ranges)
+        return
     specs.reverse()                                   # most groups (most expensive) first
     specs.append((0, None, f"{trial_dir}/n0"))        # cheapest last
     jobs = n_jobs(args, len(specs))
@@ -514,6 +719,8 @@ def main(args):
     rows.append({"N": 0, "groups": 0, "params": 0, "dp_score": 0., **{k: v for k, v in res[0].items()}})
     for n, counts in configs:
         rows.append({"N": n, "groups": ngroups_n[n], "params": tls_mod.NPAR * ngroups_n[n], "dp_score": preds[n], **res[n]})
+        if method == "bfactor":
+            rows[-1]["B_rms"] = float(numpy.sqrt(max(-preds[n], 0.) / natoms_total))
     M = [r[key_sel] for r in rows]
     best, why = choose_n(M, args.min_delta, args.tie)
     for r in rows:
@@ -521,6 +728,8 @@ def main(args):
         r["selected"] = r["N"] == best
     df = pandas.DataFrame(rows)
     cols = ["N", "groups", "params", kw] + ([kf] if kf else []) + ["d_" + key_sel, "-LL", "dp_score"]
+    if method == "bfactor":
+        cols.insert(3, "B_rms")
     df.to_csv(prefix + "_scan.csv", index=False, columns=cols + ["selected"] + ["seconds"])
     with open(prefix + "_scan.json", "w") as ofs:
         json.dump({"rows": rows, "selected_N": best, "reason": why, "metric": key_sel,

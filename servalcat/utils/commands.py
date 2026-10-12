@@ -185,6 +185,12 @@ def add_arguments(p):
     parser = subparsers.add_parser("tls_select", help='Automated selection of TLS groups', description='Automated selection of TLS groups')
     tls_select.add_arguments(parser)
 
+    # tls_bfit
+    parser = subparsers.add_parser("tls_bfit", help='Automated selection of TLS groups from a fit to the B-factors (TLSMD-like)',
+                                   description='Automated selection of TLS groups from a fit to the B-factors')
+    tls_select.add_arguments(parser, method="bfactor")
+    parser.set_defaults(method="bfactor")
+
     # occ_groups
     from servalcat.refine import occ_groups
     parser = subparsers.add_parser("occ_groups", help='Occupancy groups from alternative conformations and partial occupancies',
@@ -1263,7 +1269,7 @@ def set_prefix(args):
         args.output_prefix = f"{fileio.splitext(os.path.basename(args.model))[0]}_fcalc_{args.source}"
     elif args.subcommand == "blur":
         args.output_prefix = fileio.splitext(os.path.basename(args.hklin))[0]
-    elif args.subcommand == "tls_select":
+    elif args.subcommand in ("tls_select", "tls_bfit"):
         from servalcat.refine import tls_select
         tls_select.set_prefix(args)
     elif args.subcommand == "occ_groups":
@@ -1290,6 +1296,7 @@ def main(args):
                  fcalc=fcalc,
                  blur=blur,
                  tls_select=tls_select_main,
+                 tls_bfit=tls_select_main,
                  occ_groups=occ_groups_main,
                  sm2mm=sm2mm,
                  mm2ins=mm2ins,

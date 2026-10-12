@@ -72,7 +72,7 @@ electron diffraction — and extends it with TLS.
   and zAngle during the cycles as sparklines (and `PREFIX_summary.png` if matplotlib is installed), the sequence
   alignment if `--seq` was used, the refined occupancies and the output files; the full log still scrolls past as
   before ([details](#summary-at-the-end-of-a-run)).
-* **Smaller code base** — no cryo-EM code; a test suite (76 tests) covering the
+* **Smaller code base** — no cryo-EM code; a test suite (82 tests) covering the
   refinement options, TLS, the selection utility, sequence assignment and MTZ column selection.
 
 **Removed compared with upstream**: cryo-EM single-particle programs (`refine_spa`, `refine_spa_norefmac`,
@@ -382,7 +382,7 @@ Occupancy refinement is described in [`docs/occ_refine.rst`](docs/occ_refine.rst
 | `servalcat refine_geom` | geometry optimisation of a model (`--model`), or of a ligand dictionary (`--update_dictionary`), with `--monlib`, `--ligand`, `--hydrogen`, `--ncycle`, `--ncsr`, `--randomize`, `--keywords`, `--config`, `-o` |
 | `servalcat sigmaa` | ML (σA) parameter estimation and map calculation from a model and reflections (`--model`, `--hklin`, `--labin`, `-s`, `--twin`, `--use`, `--mask`, …) |
 | `servalcat fw` | French–Wilson conversion of intensities to amplitudes (`--hklin`, `--labin I,SIGI`) |
-| `servalcat util <subcommand>` | `tls_select` (below), `occ_groups` (occupancy groups from the alternative conformations of a model, above), `h_add`, `add_op3`, `geom`, `adp`, `conf`, `fcalc`, `blur`, `map_peaks`, `h_density`, `fix_link`, `merge_models`, `merge_dicts`, `sm2mm`, `mm2ins`, `seq`, `dnarna`, `exte`, `show`, `json2csv` |
+| `servalcat util <subcommand>` | `tls_select`, `tls_bfit` (below), `occ_groups` (occupancy groups from the alternative conformations of a model, above), `h_add`, `add_op3`, `geom`, `adp`, `conf`, `fcalc`, `blur`, `map_peaks`, `h_density`, `fix_link`, `merge_models`, `merge_dicts`, `sm2mm`, `mm2ins`, `seq`, `dnarna`, `exte`, `show`, `json2csv` |
 
 Each has `-h` for its options (`servalcat util <subcommand> -h`). `refine_xtal`, `util tls_select`, `sigmaa` and
 `refine_geom` list them in the same three tiers (required; optional with stated defaults; off unless given).
@@ -517,6 +517,50 @@ waters outside every range keep an isotropic B.
 **Limitations**: the scan uses the same N for every chain (use `--ngroups` for chain-specific numbers); the ranges are
 gemmi selections (`//A/4-80/*`), so a non-polymer residue numbered inside a range is included; the scan costs about
 (N<sub>max</sub> + 1) × `--tls_cycles` refinement cycles, so use `--max_groups`/`--tls_cycles` to shorten it for large structures.
+
+### TLS groups from the B-factors: `servalcat util tls_bfit`
+
+An alternative to `tls_select` in the spirit of **TLSMD** (Painter & Merritt, *J. Appl. Cryst.* 2006, 39, 109;
+*Acta Cryst.* D62, 439): the partition of a chain is found from the B-factors of the model alone. As the TLSMD server
+is described there, a best-fit TLS model is calculated for every possible subsegment of a chain, its predicted thermal
+parameters are compared with those of the input model, each segment gets a residual, and the N-group model is the one
+whose N − 1 break points give the lowest total residual. `tls_bfit` does the same: for every segment of consecutive residues
+the TLS parameters are fitted by least squares to the isotropic B-factors of its atoms (the normal equations are
+accumulated per residue and moved to the centre of each segment, so a fit is a 20 × 20 eigen-decomposition), and
+dynamic programming finds the division with the smallest total residual for every number of groups.
+
+```shell
+servalcat util tls_bfit --model refined.pdb -o tlsbfit                     # only the B-factors; no data needed
+servalcat util tls_bfit --model refined.pdb --hklin data.mtz -o tlsbfit    # also test every N by refinement (R-free)
+servalcat util tls_bfit --model refined.pdb --ngroups A:4 B:2 --no_eval    # numbers of groups chosen by you
+```
+
+* **Use a model refined without TLS**, so that its B-factors contain the motion. A model that has TLS applied (or
+  refined with residual B only) has little of it left in the B column.
+* Without `--hklin` the program reads the model only (no reflections, no monomer library) and reports the
+  r.m.s. of B(observed) − B(TLS) for 1 … `--max_groups` groups per chain, a graph, the recommended number and
+  `PREFIX_tls.yaml` for `refine_xtal --tls_file`. The recommended number is a rule of thumb: the smallest N for which the next
+  group lowers the residual by less than `--min_gain` (5%). A fit to B-factors **always** improves with more groups, so this is
+  not a test of whether they are real.
+* With `--hklin` every number of groups is also tested by refinement exactly as in `tls_select` (R-work and R-free per N,
+  parallel trials, the conservative rule), and the table has the B-fit column beside the R-values. Then the data decide.
+* `--atoms all|main|ca` selects the atoms that are fitted (default: all heavy atoms); with few atoms per residue a group
+  automatically needs more residues (an isotropic B determines about 10 TLS parameters). Every residue is a possible cut
+  position up to `--max_boundaries` (400); a fit takes about 1 ms per segment.
+
+**How it differs from TLSMD.** It is a re-implementation of the idea, not a port; where the published description of
+the server is silent I made my own choices: the fit is to isotropic B only, unweighted, unconstrained (T and L are
+not forced to be positive semi-definite in the fit, but are in the refinement that follows); the minimum group size is
+10 residues; the number of groups comes from the rule above or from R-free; there is no analysis of the motions and
+no web report. If you need TLSMD's own analysis, use TLSMD.
+
+**Which to use.** `tls_select` reads the *anisotropy* that the data want from the likelihood and can therefore
+see motion that is small compared with the natural spread of B-values. `tls_bfit` needs the motion to show in the B-factors
+and needs no reflections. On data simulated from a lysozyme model with two rigid domains and a model refined
+without TLS (B-factors equal to the equivalent B of the true total U), `tls_select` found the planted boundary (residues 80|81)
+and `tls_bfit` did not (it put it at 102|103): the libration was weak against a B spread of 14 Å². With stronger libration
+in the B-factors (B = 15 Å² + TLS + 0.5 Å² noise) `tls_bfit` found the boundary at once (rms residual 5.5 → 0.50 Å² on going from one
+group to two, and nothing to gain beyond). Running both and comparing R-free is cheap.
 
 ---
 

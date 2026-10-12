@@ -28,7 +28,7 @@ b_to_u = utils.model.b_to_u
 
 _add = utils.cli.add_arg
 
-def add_arguments(parser, after_required=None):
+def add_arguments(parser, after_required=None, hklin_required=True):
     """Arguments are in three tiers: (1) required, (2) optional with default values, (3) optional features that are
     off unless given. after_required(parser): called before tiers 2 and 3 so that a program built on this one
     (tls_select) can list its own options first."""
@@ -38,8 +38,9 @@ def add_arguments(parser, after_required=None):
 
     # (1) required
     g = parser.add_argument_group(utils.cli.REQUIRED)
-    _add(g, "--hklin", required=True, metavar="FILE", show="",
-         help="Reflection data: MTZ or mmCIF structure factors, merged or unmerged")
+    if hklin_required:
+        _add(g, "--hklin", required=True, metavar="FILE", show="",
+             help="Reflection data: MTZ or mmCIF structure factors, merged or unmerged")
     _add(g, "--model", required=True, metavar="FILE", show="",
          help="Atomic model: PDB or mmCIF (also small-molecule .res/.ins/.cif)")
     _add(g, "--monlib", metavar="DIR", show="$CLIBD_MON; required if that variable is not set",
@@ -146,6 +147,9 @@ def add_arguments(parser, after_required=None):
          "chain for SEQRES and label_seq_id, and residues that differ from it are reported")
 
     g = parser.add_argument_group("Additional inputs (off unless given)")
+    if not hklin_required:
+        _add(g, "--hklin", metavar="FILE", show="none",
+             help="Reflection data: MTZ or mmCIF structure factors (merged or unmerged)")
     _add(g, "--ligand", nargs="*", action="append", metavar="CIF", show="none",
          help="Restraint dictionary file(s) for ligands that are not in the monomer library")
     _add(g, "--config", metavar="YAML", show="none", help="Configuration file with all refinement settings")

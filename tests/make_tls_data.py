@@ -129,3 +129,24 @@ def make_two_chain(outdir, d_min=2.4):
         cra.atom.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)
     utils.fileio.write_model(st, os.path.join(outdir, "start"), pdb=True)
     return polyB[half].seqid.num
+
+def make_bmodel(outdir, noise=0.5):
+    """1l2h with B-factors that contain two strongly librating rigid domains (residues 4-80 and 81-164, B = 15 +
+    TLS contribution + noise), as a model refined without TLS would have. Writes bmodel.pdb and returns the first
+    residue of the second domain."""
+    b_to_u = utils.model.b_to_u
+    st = utils.fileio.read_structure(os.path.join(root, "1l2h", "1l2h.cif.gz"))
+    st.setup_entities()
+    for i, cra in enumerate(st[0].all()):
+        cra.atom.serial = i + 1
+        cra.atom.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)
+    rng = numpy.random.default_rng(3)
+    groups = tls.groups_from_selections(st, [_Item(1, ["//A/4-80/*"]), _Item(2, ["//A/81-164/*"])])
+    strong = [(numpy.diag([0.05, 0.04, 0.045]), numpy.diag([12., 9., 8.]), numpy.zeros((3, 3))),
+              (numpy.diag([0.03, 0.05, 0.04]), numpy.diag([4., 14., 10.]), numpy.zeros((3, 3)))]
+    for g, (T, L, S) in zip(groups, strong):
+        g.p = tls.p_from_matrices(T, L, S)
+        for a, u in zip(g.atoms, g.u_tls()):
+            a.b_iso = 15. + rng.normal(0, noise) + (u[0] + u[1] + u[2]) / 3. / b_to_u
+    utils.fileio.write_model(st, os.path.join(outdir, "bmodel"), pdb=True)
+    return 81

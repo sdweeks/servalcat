@@ -122,6 +122,20 @@ class TestTlsSelect(unittest.TestCase):
         self.assertLessEqual(abs(rng[0][2] - 80), 3, msg=str(rng))
         self.assertEqual(rng[1][1], rng[0][2] + 1)
 
+    def test_bfit_with_reflections_reports_r_values(self):
+        # partitions from the B-factors, every number of groups tested by refinement (the model has no TLS in its B,
+        # so only the plumbing is checked here)
+        sys.argv = ["", "util", "tls_bfit", "--model", "start.pdb", "--hklin", "data.mtz", "-s", "xray",
+                    "--labin", "FP,SIGFP,FreeR_flag", "--no_solvent", "--hydrogen", "no", "--max_groups", "2",
+                    "--tls_cycles", "3", "-d", "2.5", "-o", "bfev"]
+        main()
+        df = pandas.read_csv("bfev_scan.csv")
+        self.assertEqual(list(df.N), [0, 1, 2])
+        for k in ("Rwork", "Rfree", "B_rms"):
+            self.assertIn(k, df.columns)
+        self.assertGreater(df.Rfree[0] - df.Rfree[1], 0.005) # TLS helps
+        self.assertTrue(os.path.isfile("bfev_tls_N2.yaml"))
+
     def test_source_defaults_to_xray(self):
         # no -s/--source: X-ray is the default
         sys.argv = ["", "util", "tls_select", "--model", "start.pdb", "--hklin", "data.mtz",
@@ -183,6 +197,85 @@ class TestTlsSelect(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             tls_select.run_trials(a, specs, 1, 2)
 
+class TestBFitMethod(unittest.TestCase):
+    """util tls_bfit: TLS fitted to the isotropic B-factors of a model (in the spirit of TLSMD)"""
+    @classmethod
+    def setUpClass(cls):
+        cls.wd = tempfile.mkdtemp(prefix="servaltest_")
+        sys.path.insert(0, root)
+        import make_tls_data
+        cls.boundary = make_tls_data.make_bmodel(cls.wd)
+        cls.model = os.path.join(cls.wd, "bmodel.pdb")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.wd)
+
+    def chains(self):
+        st = utils.fileio.read_structure(self.model)
+        st.setup_entities()
+        return tls_select.polymer_chains(st, 10)
+
+    def test_residual_and_boundary(self):
+        chains = self.chains()
+        a = argparse.Namespace(atoms="all", min_residues=10, max_groups=4)
+        parts = tls_select.partitions_by_bfactor(chains, a)["A"]
+        c = chains[0]
+        res = {k: -v[0] for k, v in parts.items()}
+        rms = {k: numpy.sqrt(res[k] / a._bfit_atoms["A"]) for k in res}
+        self.assertGreater(rms[1], 4.0)                 # one rigid group cannot explain two domains
+        self.assertLess(rms[2], 0.7)                    # two can: down to the noise (0.5)
+        self.assertLess(rms[3] / rms[2], 1.0)
+        self.assertGreater(rms[3] / rms[2], 0.95)       # a third group gains almost nothing
+        bounds = parts[2][1]
+        self.assertEqual(c.residues[bounds[1]].seqid.num, self.boundary)   # the boundary between the domains
+
+    def test_atom_sets_and_minimum_size(self):
+        chains = self.chains()
+        a = argparse.Namespace(atoms="ca", min_residues=10, max_groups=3)
+        parts = tls_select.partitions_by_bfactor(chains, a)["A"]
+        for k, (gain, bounds) in parts.items():
+            sizes = numpy.diff(bounds)
+            self.assertGreaterEqual(sizes.min(), 25)    # about 10 parameters from 1 atom per residue: larger groups
+
+    def test_choose_n_elbow(self):
+        c = tls_select.choose_n_elbow
+        self.assertEqual(c([100., 10., 9.8, 9.7])[0], 2)
+        self.assertEqual(c([100., 50., 25., 12.5, 12.4])[0], 4)
+        self.assertEqual(c([100., 99.])[0], 1)
+        self.assertEqual(c([100., 60., 30.])[0], 3)     # still falling at the end
+
+    def run_bfit(self, extra, prefix):
+        sys.argv = ["", "util", "tls_bfit", "--model", self.model] + extra + ["-o", os.path.join(self.wd, prefix)]
+        main()
+
+    def test_without_reflection_data(self):
+        self.run_bfit(["--max_groups", "4"], "nodata")
+        p = os.path.join(self.wd, "nodata")
+        df = pandas.read_csv(p + "_scan.csv")
+        self.assertEqual(list(df.N), [1, 2, 3, 4])
+        self.assertTrue(numpy.all(numpy.diff(df.B_rms) < 0))
+        with open(p + "_scan.json") as f:
+            js = json.load(f)
+        self.assertEqual(js["selected_N"], 2)
+        import omegaconf
+        cfg = omegaconf.OmegaConf.load(p + "_tls.yaml")
+        sels = [g.selections[0] for g in cfg.refine.tls.groups]
+        self.assertEqual(len(sels), 2)
+        first = int(re.match(r"^//A/(\d+)-(\d+)/\*$", sels[1]).group(1))
+        self.assertEqual(first, self.boundary)
+        for n in (1, 2, 3, 4):
+            self.assertTrue(os.path.isfile(f"{p}_tls_N{n}.yaml"))
+        log = open(p + ".log").read()
+        self.assertIn("no refinement", log)
+        self.assertIn("rule of thumb", log)
+
+    def test_ngroups_without_data(self):
+        self.run_bfit(["--ngroups", "2"], "ng")
+        import omegaconf
+        cfg = omegaconf.OmegaConf.load(os.path.join(self.wd, "ng_tls.yaml"))
+        self.assertEqual(len(cfg.refine.tls.groups), 2)
+
 class TestParallelHelpers(unittest.TestCase):
     def test_radiation_source_default(self):
         from servalcat.refine import refine_xtal
@@ -241,6 +334,16 @@ class TestParallelHelpers(unittest.TestCase):
             self.assertNotIn("  " + o, shown)
         self.assertIn("--max_groups", shown)
         self.assertIn("--seq ", shown)
+        # tls_bfit: the reflection data are optional
+        p = argparse.ArgumentParser(prog="servalcat test")
+        tls_select.add_arguments(p, method="bfactor")
+        text = p.format_help()
+        self.assertIn("Required arguments:", text)
+        self.assertIn("--atoms", text)
+        self.assertEqual(p.parse_args(["--model", "m.pdb"]).hklin, None)
+        for act in p._actions:
+            if act.dest not in ("help", "model") and act.help != argparse.SUPPRESS and not act.required:
+                self.assertIn("(default:", act.help, act.dest)
         # refine_geom: one of --model / --update_dictionary
         p = argparse.ArgumentParser(prog="servalcat test")
         refine_geom.add_arguments(p)
