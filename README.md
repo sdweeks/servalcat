@@ -463,6 +463,16 @@ Recommendation: 2 group(s) per chain.
 `d_Rfree` is the decrease of Rfree (Rwork if there is no test set) from N−1 to N. `dp_score` only ranks divisions with
 the same N; it is not comparable with the change of −LL.
 
+**Files written by all three selection commands** (`tls_select`, `tls_bfit`, `tls_nma`; PREFIX is the `-o` prefix):
+
+| File | Content |
+|---|---|
+| `PREFIX_tls.yaml` | the recommended groups, for `refine_xtal --tls_file` |
+| `PREFIX_tls_N*.yaml` | the groups for every number of groups that was scanned |
+| `PREFIX_domains_N*.csv` | the TLS group of every residue (columns `chain`, `resi`, `resname`, `domain`; group numbers as `id` in the yaml), for every number scanned; with `--ngroups`: `PREFIX_domains.csv` |
+| `PREFIX_domains.pdb` | the model without hydrogen atoms with the **group number in the B-factor column** (0 for atoms in no group): colour by B in Coot or PyMOL to see the groups |
+| `PREFIX_scan.csv`, `.json`, `.png` | the table of R-values (or B-fit residuals) against the number of groups, the graph (if matplotlib is installed) |
+
 **Recommendation (conservative).** TLS is recommended at all only if one group per chain lowers R by at least
 `--min_delta` (0.001). The number of groups is then the lowest N ≥ 2 whose jump d(N) is within `--tie` (0.25) of the
 biggest jump among N ≥ 2 — the lowest number of groups that gives the biggest improvement. If no further group

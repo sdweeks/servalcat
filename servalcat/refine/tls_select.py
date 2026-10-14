@@ -441,6 +441,25 @@ def write_yaml(path, groups):
                             "groups": [{"id": i + 1, "selections": sels} for i, sels in enumerate(groups)]}}}
     omegaconf.OmegaConf.save(omegaconf.OmegaConf.create(d), path)
 
+def write_domain_csv(path, items):
+    """items: [(chain name, residue, group number)]. CSV: the TLS group of every residue, readable by any program"""
+    rows = [(ch, tls_mod._seqid_str(r.seqid), r.name, int(g)) for ch, r, g in items]
+    pandas.DataFrame(rows, columns=["chain", "resi", "resname", "domain"]).to_csv(path, index=False)
+
+def write_domains_pdb(path, st, items):
+    """The model (without hydrogen atoms) with the TLS group number in the B-factor column, 0 for atoms in no group,
+    to colour by B in Coot or PyMOL"""
+    st2 = st.clone()
+    st2.remove_hydrogens()
+    dom = {(ch, str(r.seqid)): int(g) for ch, r, g in items}
+    for chain in st2[0]:
+        for r in chain:
+            v = dom.get((chain.name, str(r.seqid)), 0)
+            for a in r:
+                a.b_iso = float(v)
+                a.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)
+    utils.fileio.write_model(st2, file_name=path)
+
 def run_trial(args0, yaml_path, prefix, ncycle):
     """Refinement with xyz fixed (residual B and, if yaml_path is given, TLS refined); returns the data statistics
     of the last cycle, and of cycle 0"""
@@ -556,7 +575,8 @@ def ascii_chart(rows, key, width=40):
         lines.append(f" {r['N']:3d} {r[key]:.4f} " + "#" * n)
     return "\n".join(lines)
 
-def finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_total, t_start, config_for_n, show_ranges):
+def finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_total, t_start, config_for_n, show_ranges,
+                        write_pdb):
     """Table, graph and recommendation of the B-factor fit alone (no refinement)"""
     rows = []
     for n, _ in configs:
@@ -603,8 +623,10 @@ def finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_t
                    "\n  give --hklin to compare R-free for each number of groups")
     show_ranges(desc)
     write_yaml(prefix + "_tls.yaml", groups)
+    write_pdb(best)
     logger.writeln(f"\nTLS definition written: {prefix}_tls.yaml\n  use it with: refine_xtal --tls_file {prefix}_tls.yaml\n"
-                   f"  (other numbers of groups: {prefix}_tls_N*.yaml; the number can be forced with --ngroups)")
+                   f"  (other numbers of groups: {prefix}_tls_N*.yaml; the number can be forced with --ngroups)\n"
+                   f"Group of every residue: {prefix}_domains_N*.csv; model with the group number as B-factor: {prefix}_domains.pdb")
     logger.writeln(f"Table: {prefix}_scan.csv, {prefix}_scan.json    total time {time.time() - t_start:.0f} s")
 
 def main(args):
@@ -639,26 +661,40 @@ def main(args):
         parts = partitions_for_chains(ctx, chains, args)
     prefix = args.output_prefix
     trial_dir = prefix + "_trials" # files written by the trial refinements
-    os.makedirs(trial_dir, exist_ok=True)
+    if not data_free:
+        os.makedirs(trial_dir, exist_ok=True)
     by_name = {c.name: c for c in chains}
+
+    def resolve(name, k): # the division of a chain into k groups (fewer if k is not possible)
+        avail = parts[name]
+        if k not in avail:
+            kk = max(x for x in avail if x <= k) if any(x <= k for x in avail) else None
+            if kk is None:
+                raise SystemExit(f"Error: chain {name} cannot be divided into {k} groups of at least "
+                                 f"{args.min_residues} residues")
+            logger.writeln(f"WARNING: chain {name}: {k} groups not possible with min_residues= {args.min_residues}; using {kk}")
+            k = kk
+        return avail[k]
 
     def config_for(counts): # counts: chain name -> requested number of groups
         groups, desc, pred = [], {}, 0.
         for name, k in counts.items():
             c = by_name[name]
-            avail = parts[name]
-            if k not in avail:
-                kk = max(x for x in avail if x <= k) if any(x <= k for x in avail) else None
-                if kk is None:
-                    raise SystemExit(f"Error: chain {name} cannot be divided into {k} groups of at least "
-                                     f"{args.min_residues} residues")
-                logger.writeln(f"WARNING: chain {name}: {k} groups not possible with min_residues= {args.min_residues}; using {kk}")
-                k = kk
-            gain, bounds = avail[k]
+            gain, bounds = resolve(name, k)
             pred += gain
             desc[name] = c.ranges(bounds)
             groups += [[c.selection(i, j)] for i, j in zip(bounds[:-1], bounds[1:])]
         return groups, desc, pred
+
+    def items_for(counts): # (chain, residue, group number) for every residue; groups are numbered as in the yaml
+        items, g = [], 0
+        for name, k in counts.items():
+            c = by_name[name]
+            _, bounds = resolve(name, k)
+            for i, j in zip(bounds[:-1], bounds[1:]):
+                g += 1
+                items += [(name, c.residues[x], g) for x in range(i, j)]
+        return items
 
     def show_ranges(desc):
         for name, rngs in desc.items():
@@ -673,7 +709,11 @@ def main(args):
         show_ranges(desc)
         out_yaml = prefix + "_tls.yaml"
         write_yaml(out_yaml, groups)
-        logger.writeln(f"\nTLS definition written: {out_yaml}\n  use it with: refine_xtal --tls_file {out_yaml}")
+        items = items_for(counts)
+        write_domain_csv(prefix + "_domains.csv", items)
+        write_domains_pdb(prefix + "_domains.pdb", st, items)
+        logger.writeln(f"\nTLS definition written: {out_yaml}\n  use it with: refine_xtal --tls_file {out_yaml}\n"
+                       f"Group of every residue: {prefix}_domains.csv; model with the group number as B-factor: {prefix}_domains.pdb")
         if not args.no_eval:
             jobs = n_jobs(args, 2)
             logger.writeln(f"\nEvaluating by refinement (xyz fixed, {args.tls_cycles} cycles){f' on {jobs} processes' if jobs > 1 else ''}..")
@@ -704,11 +744,13 @@ def main(args):
         groups, desc, pred = config_for(counts)
         yaml_n = f"{prefix}_tls_N{n}.yaml"
         write_yaml(yaml_n, groups)
+        write_domain_csv(f"{prefix}_domains_N{n}.csv", items_for(counts))
         descs[n], preds[n], ngroups_n[n] = desc, pred, len(groups)
         specs.append((n, yaml_n, f"{trial_dir}/n{n}"))
     if method == "bfactor" and args.no_eval:
         finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_total, t_start,
-                            lambda n: config_for(dict(configs)[n]), show_ranges)
+                            lambda n: config_for(dict(configs)[n]), show_ranges,
+                            lambda n: write_domains_pdb(prefix + "_domains.pdb", st, items_for(dict(configs)[n])))
         return
     specs.reverse()                                   # most groups (most expensive) first
     specs.append((0, None, f"{trial_dir}/n0"))        # cheapest last
@@ -784,7 +826,9 @@ def main(args):
         logger.writeln(f"Recommendation: {best} group(s) per chain. {why}")
         show_ranges(desc)
         write_yaml(prefix + "_tls.yaml", groups)
+        write_domains_pdb(prefix + "_domains.pdb", st, items_for({c: min(best, kmax_chain[c]) for c in kmax_chain}))
         logger.writeln(f"\nTLS definition written: {prefix}_tls.yaml\n  use it with: refine_xtal --tls_file {prefix}_tls.yaml\n"
-                       f"  (other numbers of groups: {prefix}_tls_N*.yaml; the number can be forced with --ngroups)")
+                       f"  (other numbers of groups: {prefix}_tls_N*.yaml; the number can be forced with --ngroups)\n"
+                       f"Group of every residue: {prefix}_domains_N*.csv; model with the group number as B-factor: {prefix}_domains.pdb")
     logger.writeln(f"Table: {prefix}_scan.csv, {prefix}_scan.json    total time {time.time() - t_start:.0f} s")
 # main()

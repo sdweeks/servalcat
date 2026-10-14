@@ -101,6 +101,28 @@ class TestTlsSelect(unittest.TestCase):
                     "--labin", "FP,SIGFP,FreeR_flag", "--no_solvent", "--hydrogen", "no", "-o", prefix] + extra
         main()
 
+    def check_domain_files(self, csv, pdb, yaml, expect_groups):
+        """the csv and the pdb describe the same groups as the yaml"""
+        import omegaconf
+        df = pandas.read_csv(csv)
+        self.assertEqual(sorted(set(df.domain)), list(range(1, expect_groups + 1)))
+        cfg = omegaconf.OmegaConf.load(yaml)
+        for gi, g in enumerate(cfg.refine.tls.groups):
+            self.assertEqual(g.id, gi + 1)
+            for sel_str in g.selections:
+                m = re.match(r"^//(\w+)/(-?\d+)-(-?\d+)/\*$", sel_str)
+                chain, a, b = m.group(1), int(m.group(2)), int(m.group(3))
+                sub = df[(df.chain == chain) & (df.resi.astype(int).between(a, b))]
+                self.assertTrue(len(sub) > 0)
+                self.assertEqual(set(sub.domain), {gi + 1}, sel_str)       # the csv agrees with the yaml
+        if pdb:
+            st = gemmi.read_structure(pdb)
+            self.assertFalse(st[0].has_hydrogen())
+            by_res = {(ch.name, r.seqid.num): {round(a.b_iso) for a in r} for ch in st[0] for r in ch}
+            for _, row in df.iterrows():
+                self.assertEqual(by_res[(row.chain, int(row.resi))], {int(row.domain)})   # B column = group number
+            self.assertEqual({v for vals in by_res.values() for v in vals} - {0}, set(range(1, expect_groups + 1)))
+
     def read_ranges(self, path):
         import omegaconf
         cfg = omegaconf.OmegaConf.load(path)
@@ -121,6 +143,7 @@ class TestTlsSelect(unittest.TestCase):
         self.assertEqual(rng[1][2], 152)
         self.assertLessEqual(abs(rng[0][2] - 80), 3, msg=str(rng))
         self.assertEqual(rng[1][1], rng[0][2] + 1)
+        self.check_domain_files("sel_domains.csv", "sel_domains.pdb", "sel_tls.yaml", 2)
 
     def test_bfit_with_reflections_reports_r_values(self):
         # partitions from the B-factors, every number of groups tested by refinement (the model has no TLS in its B,
@@ -174,6 +197,9 @@ class TestTlsSelect(unittest.TestCase):
         for fn in ("scan_tls.yaml", "scan_tls_N1.yaml", "scan_tls_N2.yaml", "scan_tls_N3.yaml"):
             self.assertTrue(os.path.isfile(fn), fn)
         self.assertEqual(len(self.read_ranges("scan_tls.yaml")), 2)
+        for n in (1, 2, 3):
+            self.check_domain_files(f"scan_domains_N{n}.csv", None, f"scan_tls_N{n}.yaml", n)
+        self.check_domain_files("scan_domains_N2.csv", "scan_domains.pdb", "scan_tls.yaml", 2)   # the recommendation
 
     def test_parallel_scan_equals_serial_scan(self):
         # trials are independent, so running them in parallel processes must not change any number
@@ -266,6 +292,12 @@ class TestBFitMethod(unittest.TestCase):
         self.assertEqual(first, self.boundary)
         for n in (1, 2, 3, 4):
             self.assertTrue(os.path.isfile(f"{p}_tls_N{n}.yaml"))
+            self.assertEqual(sorted(set(pandas.read_csv(f"{p}_domains_N{n}.csv").domain)), list(range(1, n + 1)))
+        dom = pandas.read_csv(p + "_domains_N2.csv")
+        self.assertEqual(set(dom[dom.resi.astype(int) < self.boundary].domain), {1})
+        self.assertEqual(set(dom[dom.resi.astype(int) >= self.boundary].domain), {2})
+        self.assertTrue(os.path.isfile(p + "_domains.pdb"))
+        self.assertFalse(os.path.exists(p + "_trials"))                # no refinement, no trial directory
         log = open(p + ".log").read()
         self.assertIn("no refinement", log)
         self.assertIn("rule of thumb", log)
@@ -383,6 +415,9 @@ class TestTlsSelectTwoChains(unittest.TestCase):
         self.assertTrue(sels[1].startswith("//B/") and sels[2].startswith("//B/"))
         b_end = int(re.match(r"^//B/\d+-(\d+)/\*$", sels[1]).group(1))
         self.assertLessEqual(abs(b_end + 1 - self.split), 3, msg=str(sels))
+        df = pandas.read_csv("sel_domains.csv")                       # groups are numbered chain by chain: A: 1, B: 2 and 3
+        self.assertEqual(sorted(set(df[df.chain == "A"].domain)), [1])
+        self.assertEqual(sorted(set(df[df.chain == "B"].domain)), [2, 3])
 
 if __name__ == '__main__':
     unittest.main()

@@ -390,20 +390,11 @@ def set_prefix(args):
 
 def write_domain_files(prefix, n, nodes, labels, st):
     """CSV with the domain of every residue (chain, residue number, name, domain), for use by other programs"""
-    rows = [(nd.chain, tls_mod._seqid_str(nd.residue.seqid), nd.residue.name, int(l) + 1) for nd, l in zip(nodes, labels)]
-    pandas.DataFrame(rows, columns=["chain", "resi", "resname", "domain"]).to_csv(f"{prefix}_domains_N{n}.csv", index=False)
+    ts.write_domain_csv(f"{prefix}_domains_N{n}.csv", [(nd.chain, nd.residue, int(l) + 1) for nd, l in zip(nodes, labels)])
 
 def write_domains_pdb(path, st, nodes, labels):
     """the model with the domain number in the B-factor column (0 for atoms outside the network), to colour by B"""
-    st2 = st.clone()
-    dom = {(nd.chain, str(nd.residue.seqid)): int(l) + 1 for nd, l in zip(nodes, labels)}
-    for ch in st2[0]:
-        for r in ch:
-            v = dom.get((ch.name, str(r.seqid)), 0)
-            for a in r:
-                a.b_iso = float(v)
-                a.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)
-    utils.fileio.write_model(st2, file_name=path)
+    ts.write_domains_pdb(path, st, [(nd.chain, nd.residue, int(l) + 1) for nd, l in zip(nodes, labels)])
 
 def main(args):
     set_prefix(args)
