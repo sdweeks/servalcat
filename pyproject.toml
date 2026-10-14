@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core", "nanobind>=3.1.0,<4"]
+requires = ["scikit-build-core", "nanobind>=3.1.0,<4", "nanobind-backend>=1.0"]
 build-backend = "scikit_build_core.build"
 
 # https://packaging.python.org/en/latest/specifications/declaring-project-metadata/
@@ -8,7 +8,7 @@ name = "servalcat"
 dynamic = ["version"]
 requires-python = ">=3.10"
 dependencies = ['packaging', 'numpy>=1.15', 'scipy', 'pandas>=1.1.0', 'omegaconf==2.3.0', "nanobind-backend>=1.0"]
-description="Structure refinement and validation for crystallography and single particle analysis"
+description="Structure refinement and validation for X-ray crystallography"
 readme = "README.md"
 authors = [
   { name = "Keitaro Yamashita", email = "" },
@@ -22,7 +22,6 @@ external-gemmi = ["gemmi==0.7.5"]
 
 [project.scripts]
 servalcat = "servalcat.__main__:main"
-refmacat  = "servalcat.refmac.refmac_wrapper:command_line"
 
 [tool.scikit-build]
 #build-dir = "/tmp/gemmi_build2/{wheel_tag}"

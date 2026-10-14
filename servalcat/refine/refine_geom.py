@@ -18,39 +18,47 @@ from servalcat.refine.refine import RefineParams, Geom, Refine, convert_stats_to
 from servalcat.refmac import refmac_keywords
 
 def add_arguments(parser):
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--model',
-                        help='Input atomic model file')
-    group.add_argument('--update_dictionary', 
-                       help="Dictionary file to be updated")
-    parser.add_argument("--monlib",
-                        help="Monomer library path. Default: $CLIBD_MON")
-    parser.add_argument('--ligand', nargs="*", action="append",
-                        help="restraint dictionary cif file(s)")
-    parser.add_argument('--ncycle', type=int, default=10,
-                        help="(when --model is used) number of CG cycles (default: %(default)d)")
-    parser.add_argument('--ncycle_update', type=int, nargs=2, default=[10,30], metavar=("NCYCLE_1", "NCYCLE_2"),
-                        help="(when --update_dictionary is used) number of cycles for the first and second steps (default: %(default)s)")
-    parser.add_argument('--hydrogen', default="all", choices=["all", "yes", "no"],
-                        help="all: add riding hydrogen atoms, yes: use hydrogen atoms if present, no: remove hydrogen atoms in input. "
-                        "Default: %(default)s")
-    parser.add_argument('--find_links', action='store_true', 
-                        help='Automatically add links')
-    parser.add_argument('--randomize', type=float, default=0,
-                        help='Shake coordinates with specified rmsd')
-    parser.add_argument('--ncsr', action='store_true', 
-                        help='Use local NCS restraints')
-    parser.add_argument('--keywords', nargs='+', action="append",
-                        help="refmac keyword(s)")
-    parser.add_argument('--keyword_file', nargs='+', action="append",
-                        help="refmac keyword file(s)")
-    parser.add_argument('-o','--output_prefix',
-                        help="Output prefix")
-    parser.add_argument("--write_trajectory", action='store_true',
-                        help="Write all output from cycles")
-    parser.add_argument("--config",
-                        help="Config file (.yaml)")
-    parser.add_argument('--adp',  choices=["fix"], default="fix", help=argparse.SUPPRESS) # dummy for omegaconf
+    add = utils.cli.add_arg
+    utils.cli.setup_parser(parser, "Geometry optimisation of an atomic model, or of the coordinates of a ligand "
+                           "restraint dictionary, with the restraints of the monomer library (no diffraction data).",
+                           "(--model FILE | --update_dictionary FILE) [--monlib DIR]", "--model model.pdb -o regularised")
+
+    g = parser.add_argument_group(utils.cli.REQUIRED)
+    one_of = g.add_mutually_exclusive_group(required=True)
+    add(one_of, "--model", metavar="FILE", show="", help="Atomic model: PDB or mmCIF (one of --model and --update_dictionary is required)")
+    add(one_of, "--update_dictionary", metavar="FILE", show="",
+        help="Ligand restraint dictionary (cif) whose ideal coordinates are updated")
+    add(g, "--monlib", metavar="DIR", show="$CLIBD_MON; required if that variable is not set",
+        help="Monomer library: directory with the CCP4 monomer cif dictionaries")
+
+    g = parser.add_argument_group(utils.cli.DEFAULTS)
+    add(g, "--ncycle", type=int, default=10, metavar="N",
+        help="Number of cycles, with --model")
+    add(g, "--ncycle_update", type=int, nargs=2, default=[10, 30], metavar=("N1", "N2"),
+        help="Number of cycles of the first and the second step, with --update_dictionary")
+    add(g, "--hydrogen", default="all", choices=["all", "yes", "no"],
+        help="all: add riding hydrogen atoms; yes: use hydrogen atoms if present in the model; no: remove hydrogen atoms")
+    add(g, "--randomize", type=float, default=0, metavar="RMSD", show="0, no shaking",
+        help="Shake the coordinates with this rmsd in Angstrom before refinement")
+    add(g, "-o", "--output_prefix", metavar="PREFIX", show="<input file name>_refined",
+        help="Prefix of the output files")
+
+    g = parser.add_argument_group("Refinement options (off unless given)")
+    add(g, "--ncsr", action="store_true", help="Local NCS restraints")
+    add(g, "--find_links", action="store_true", help="Find and add links such as metal coordination")
+
+    g = parser.add_argument_group("Additional inputs (off unless given)")
+    add(g, "--ligand", nargs="*", action="append", metavar="CIF", show="none",
+        help="Restraint dictionary file(s) for ligands that are not in the monomer library")
+    add(g, "--config", metavar="YAML", show="none", help="Configuration file with all refinement settings")
+    add(g, "--keywords", nargs="+", action="append", metavar="KEYWORD", show="none",
+        help="REFMAC-style keyword(s), e.g. restraint weights")
+    add(g, "--keyword_file", nargs="+", action="append", metavar="FILE", show="none",
+        help="File(s) with REFMAC-style keywords")
+
+    g = parser.add_argument_group("Advanced options (off unless given)")
+    add(g, "--write_trajectory", action="store_true", help="Write the model of every cycle")
+    parser.add_argument('--adp', choices=["fix"], default="fix", help=argparse.SUPPRESS) # dummy for omegaconf
 # add_arguments()
 
 def parse_args(arg_list):
