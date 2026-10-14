@@ -191,6 +191,12 @@ def add_arguments(p):
     tls_select.add_arguments(parser, method="bfactor")
     parser.set_defaults(method="bfactor")
 
+    # tls_nma
+    from servalcat.refine import tls_nma
+    parser = subparsers.add_parser("tls_nma", help='TLS groups from domains found by normal-mode analysis (ANM or GNM)',
+                                   description='TLS groups from domains found by normal-mode analysis')
+    tls_nma.add_arguments(parser)
+
     # occ_groups
     from servalcat.refine import occ_groups
     parser = subparsers.add_parser("occ_groups", help='Occupancy groups from alternative conformations and partial occupancies',
@@ -958,6 +964,10 @@ def tls_select_main(args):
     from servalcat.refine import tls_select
     return tls_select.main(args)
 
+def tls_nma_main(args):
+    from servalcat.refine import tls_nma
+    tls_nma.main(args)
+
 def occ_groups_main(args):
     from servalcat.refine import occ_groups
     occ_groups.main(args)
@@ -1272,6 +1282,9 @@ def set_prefix(args):
     elif args.subcommand in ("tls_select", "tls_bfit"):
         from servalcat.refine import tls_select
         tls_select.set_prefix(args)
+    elif args.subcommand == "tls_nma":
+        from servalcat.refine import tls_nma
+        tls_nma.set_prefix(args)
     elif args.subcommand == "occ_groups":
         args.output_prefix = fileio.splitext(os.path.basename(args.model))[0] + "_occ"
     elif args.subcommand == "sm2mm":
@@ -1297,6 +1310,7 @@ def main(args):
                  blur=blur,
                  tls_select=tls_select_main,
                  tls_bfit=tls_select_main,
+                 tls_nma=tls_nma_main,
                  occ_groups=occ_groups_main,
                  sm2mm=sm2mm,
                  mm2ins=mm2ins,

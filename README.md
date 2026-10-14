@@ -72,7 +72,10 @@ electron diffraction — and extends it with TLS.
   and zAngle during the cycles as sparklines (and `PREFIX_summary.png` if matplotlib is installed), the sequence
   alignment if `--seq` was used, the refined occupancies and the output files; the full log still scrolls past as
   before ([details](#summary-at-the-end-of-a-run)).
-* **Smaller code base** — no cryo-EM code; a test suite (82 tests) covering the
+* **TLS groups from normal modes** — `servalcat util tls_nma` finds domains that move together with an anisotropic or a
+  Gaussian elastic network model and writes them as TLS groups, also when a domain is internal or made of several
+  stretches or chains ([below](#tls-groups-from-normal-modes-servalcat-util-tls_nma)).
+* **Smaller code base** — no cryo-EM code; a test suite (96 tests) covering the
   refinement options, TLS, the selection utility, sequence assignment and MTZ column selection.
 
 **Removed compared with upstream**: cryo-EM single-particle programs (`refine_spa`, `refine_spa_norefmac`,
@@ -382,7 +385,7 @@ Occupancy refinement is described in [`docs/occ_refine.rst`](docs/occ_refine.rst
 | `servalcat refine_geom` | geometry optimisation of a model (`--model`), or of a ligand dictionary (`--update_dictionary`), with `--monlib`, `--ligand`, `--hydrogen`, `--ncycle`, `--ncsr`, `--randomize`, `--keywords`, `--config`, `-o` |
 | `servalcat sigmaa` | ML (σA) parameter estimation and map calculation from a model and reflections (`--model`, `--hklin`, `--labin`, `-s`, `--twin`, `--use`, `--mask`, …) |
 | `servalcat fw` | French–Wilson conversion of intensities to amplitudes (`--hklin`, `--labin I,SIGI`) |
-| `servalcat util <subcommand>` | `tls_select`, `tls_bfit` (below), `occ_groups` (occupancy groups from the alternative conformations of a model, above), `h_add`, `add_op3`, `geom`, `adp`, `conf`, `fcalc`, `blur`, `map_peaks`, `h_density`, `fix_link`, `merge_models`, `merge_dicts`, `sm2mm`, `mm2ins`, `seq`, `dnarna`, `exte`, `show`, `json2csv` |
+| `servalcat util <subcommand>` | `tls_select`, `tls_bfit`, `tls_nma` (below), `occ_groups` (occupancy groups from the alternative conformations of a model, above), `h_add`, `add_op3`, `geom`, `adp`, `conf`, `fcalc`, `blur`, `map_peaks`, `h_density`, `fix_link`, `merge_models`, `merge_dicts`, `sm2mm`, `mm2ins`, `seq`, `dnarna`, `exte`, `show`, `json2csv` |
 
 Each has `-h` for its options (`servalcat util <subcommand> -h`). `refine_xtal`, `util tls_select`, `sigmaa` and
 `refine_geom` list them in the same three tiers (required; optional with stated defaults; off unless given).
@@ -561,6 +564,48 @@ without TLS (B-factors equal to the equivalent B of the true total U), `tls_sele
 and `tls_bfit` did not (it put it at 102|103): the libration was weak against a B spread of 14 Å². With stronger libration
 in the B-factors (B = 15 Å² + TLS + 0.5 Å² noise) `tls_bfit` found the boundary at once (rms residual 5.5 → 0.50 Å² on going from one
 group to two, and nothing to gain beyond). Running both and comparing R-free is cheap.
+
+### TLS groups from normal modes: `servalcat util tls_nma`
+
+The third way to define groups, for **domains that move against the rest** and are not necessarily made of consecutive
+residues (an internal domain, a domain formed by two stretches, a domain of two chains). An elastic network model of the
+polymer residues (one node per residue: C-alpha, or C4' in nucleic acids; springs between nodes closer than a cutoff)
+gives the low-frequency normal modes, and residues that move together in those modes are clustered into domains. Two
+network models are available, `--enm anm` (default) and `--enm gnm`:
+
+| | `--enm anm` | `--enm gnm` |
+|---|---|---|
+| Model | anisotropic network model (Atilgan et al. 2001), 3N × 3N Hessian | Gaussian network model (Bahar et al. 1997), N × N Kirchhoff matrix |
+| Modes | displacement vectors | fluctuation amplitudes (no direction) |
+| Default cutoff | 15 Å | 10 Å |
+| Residues belong together if | the distance between them hardly changes in the slow modes (Hinsen et al. 1999) | they are strongly correlated in the slow modes |
+
+```shell
+servalcat util tls_nma --model refined.pdb -o tlsnma                  # model only: domains for 1 .. 6 groups
+servalcat util tls_nma --model refined.pdb --enm gnm --ngroups 3 -o tlsnma
+servalcat util tls_nma --model refined.pdb --hklin data.mtz -o tlsnma  # also test every number by refinement (R-free)
+```
+
+* The residues are clustered by spectral clustering (normalised cut) of the contact network weighted by the similarity
+  of their motion, so every domain is compact in space; pieces smaller than `--min_fragment` residues that are separate in
+  space, and stretches shorter than `--min_stretch` (3) residues inside another domain, are given to their neighbours, and a domain
+  has at least `--min_residues` (20) residues. Each domain is one TLS group with one selection for every stretch of residues.
+* Without `--hklin` only the model is read. The domains for 1 … `--max_groups` (6) are compared by fitting one TLS group to the
+  B-factors of each domain (`B_rms`, as in `tls_bfit`); the recommendation is the same rule of thumb and always needs checking.
+  With `--hklin` every number of domains is tested by refinement and R-free decides, as in `tls_select`.
+* Output: `PREFIX_tls.yaml` (for `refine_xtal --tls_file`), `PREFIX_tls_N*.yaml`, `PREFIX_domains_N*.csv` (the domain of every residue,
+  readable by any program) and `PREFIX_domains.pdb`, the model with the domain number as B-factor, to colour by B in Coot or PyMOL.
+* Both network models are implemented here with scipy (sparse matrices; shift-invert for the lowest modes of large networks,
+  about 10 times faster than a full diagonalisation) from the standard definitions. The eigenvalues and eigenvectors agree with those of
+  [ProDy](https://github.com/prody/ProDy) 2.6.1 (MIT licence) to 1e-14; ProDy is not needed (the test suite compares with it if it is installed).
+
+**What it does and does not show.** On pseudo-proteins with a known answer (residues 41–80 a compact internal domain, 1–40 and 81–120
+the other domain, touching weakly), both models found exactly that: one group made of the two flanks and one internal group, for 1 to
+about 130 springs between the domains, and 97–99% of residues right even when the domains nearly touch. Three domains in a row were found as well.
+That is a case designed for an elastic network, in which domains are compact clouds. On a real, compact one-domain-like protein (a 144-residue lysozyme) the modes
+do not give a clean split: the groups are compact in space but each is made of several stretches, and the B-factor fit improves only slowly with the number of groups.
+Treat the domains as *candidates*, look at `PREFIX_domains.pdb`, and let R-free (`--hklin`) decide. The normal modes
+describe the hinge motions of the free molecule; the TLS parameters in a crystal also reflect the crystal contacts.
 
 ---
 

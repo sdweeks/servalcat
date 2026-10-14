@@ -210,6 +210,25 @@ class ChainGain:
         return G
 
 
+def ls_residual(H, g, yy):
+    """Minimum of sum (b - X p)^2 from the normal equations H = X^T X, g = X^T b, yy = sum b^2. The parameters that the
+    data do not determine (H is singular) do not matter, only the residual is returned."""
+    d = numpy.sqrt(numpy.maximum(numpy.diag(H), 1e-30))
+    Hs, gs = H / d[:, None] / d[None, :], g / d
+    w, V = numpy.linalg.eigh(Hs)
+    keep = w > 1e-9 * w.max()                     # the combinations that the data determine
+    c = V[:, keep].T @ gs
+    return float(max(yy - numpy.sum(c * c / w[keep]), 0.))
+
+def bfit_residual(pos, b):
+    """Least-squares fit of ONE TLS group to the isotropic B-factors b of atoms at pos (N, 3): the residual sum of squares"""
+    pos = numpy.asarray(pos, float)
+    b = numpy.asarray(b, float)
+    J = tls_mod.tls_jacobian(pos - pos.mean(axis=0)) @ tls_mod._P
+    X = u_to_b * (J[:, 0] + J[:, 1] + J[:, 2]) / 3.
+    return ls_residual(X.T @ X, X.T @ b, float(b @ b))
+
+
 class ChainBFit:
     """Least-squares fit of a TLS model to the isotropic B-factors of the atoms of a segment of consecutive residues
     (the idea of TLSMD: the B-factors of a model describe what the TLS groups would have to explain). The isotropic B
@@ -248,12 +267,7 @@ class ChainBFit:
         M = tls_mod.origin_shift_matrix(o_seg, self.origin, self.pts + o_seg)
         g = M.T @ (self.pg[j] - self.pg[i])
         H = M.T @ (self.ph[j] - self.ph[i]) @ M
-        d = numpy.sqrt(numpy.maximum(numpy.diag(H), 1e-30))
-        Hs, gs = H / d[:, None] / d[None, :], g / d
-        w, V = numpy.linalg.eigh(Hs)
-        keep = w > 1e-9 * w.max()                     # the combinations that the isotropic B determines
-        c = V[:, keep].T @ gs
-        return float(max(self.pyy[j] - self.pyy[i] - numpy.sum(c * c / w[keep]), 0.))
+        return ls_residual(H, g, self.pyy[j] - self.pyy[i])
 
     def gain_matrix(self, bounds):
         """minus the residual of every segment, so that the division with the largest total is the best fit"""
