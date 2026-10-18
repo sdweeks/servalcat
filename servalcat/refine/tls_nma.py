@@ -54,10 +54,14 @@ class Node:
     def __init__(self, chain, residue, pos, index):
         self.chain, self.residue, self.pos, self.index = chain, residue, pos, index
 
+class ChainResidues(list):
+    """the residues of a chain that are nodes, in order; blockers: numbers of the chain's other residues (waters, ligands)"""
+    blockers = ()
+
 def collect_nodes(st):
     """One node per polymer residue of the first model: C-alpha of amino acids, C4' of nucleotides. Residues are
     recognised by name (not by entity or connectivity), waters and ligands are ignored.
-    Returns the list of Node and {chain name: [residues of the chain that are nodes, in order]}"""
+    Returns the list of Node and {chain name: ChainResidues, the residues of the chain that are nodes, in order}"""
     nodes, by_chain = [], {}
     for ch in st[0]:
         for r in ch:
@@ -73,7 +77,11 @@ def collect_nodes(st):
             if a is None:
                 continue
             nodes.append(Node(ch.name, r, numpy.array([a.pos.x, a.pos.y, a.pos.z]), len(nodes)))
-            by_chain.setdefault(ch.name, []).append(r)
+            by_chain.setdefault(ch.name, ChainResidues()).append(r)
+    for ch in st[0]:
+        if ch.name in by_chain:
+            polymer = {r.seqid.num for r in ch if tls_mod.is_polymer_residue(r)}
+            by_chain[ch.name].blockers = sorted({r.seqid.num for r in ch} - polymer)
     return nodes, by_chain
 
 # ---------------------------------------------------------------------------------------------------
@@ -143,8 +151,11 @@ def network_modes(pos, enm, cutoff, nmodes, gamma=1.0):
         raise ValueError(enm)
     return edges, w, V
 
-def edge_dissimilarity(pos, edges, enm, w, V):
-    """Dissimilarity of the two nodes of every edge: 0 = move together as a rigid body"""
+def edge_dissimilarity(pos, edges, enm, w, V, chain_ids=None):
+    """Dissimilarity of the two nodes of every edge: 0 = move together as a rigid body. chain_ids: chain of every
+    node; for gnm the fluctuation of a chain as a whole is then removed from its modes (in a complex, the slow modes are
+    mostly the motions of the chains against each other, which would hide the domains inside a chain; in anm the
+    relative displacement of two nodes of a chain already ignores it)."""
     wt = 1.0 / w
     wt = wt / wt.sum()
     i, j = edges[:, 0], edges[:, 1]
@@ -157,6 +168,11 @@ def edge_dissimilarity(pos, edges, enm, w, V):
             var += wt[k] * (((u[j] - u[i]) * e).sum(1)) ** 2   # variance of the distance i-j from mode k
         return numpy.sqrt(var)
     # gnm: 1 - normalised correlation in the slow modes
+    if chain_ids is not None:
+        V = V.copy()
+        for c in numpy.unique(chain_ids):
+            m = chain_ids == c
+            V[m] -= V[m].mean(axis=0)
     corr = (V[i] * V[j] * wt).sum(1)
     norm = numpy.sqrt((V[i] ** 2 * wt).sum(1) * (V[j] ** 2 * wt).sum(1))
     return numpy.sqrt(numpy.maximum(1.0 - corr / numpy.maximum(norm, 1e-30), 0.0))
@@ -164,7 +180,7 @@ def edge_dissimilarity(pos, edges, enm, w, V):
 # ---------------------------------------------------------------------------------------------------
 # clustering
 def graph_affinity(n, edges, dist):
-    sigma = max(float(numpy.median(dist)), 1e-9)
+    sigma = max(float(numpy.median(dist)) if len(dist) else 1.0, 1e-9)
     a = numpy.exp(-(dist / sigma) ** 2)
     A = scipy.sparse.coo_matrix((a, (edges[:, 0], edges[:, 1])), shape=(n, n))
     return (A + A.T).tocsr()
@@ -273,25 +289,20 @@ def smooth_stretches(labels, nodes, A, min_stretch):
 # ---------------------------------------------------------------------------------------------------
 # groups
 def stretches(nodes, labels, label, by_chain):
-    """selections (gemmi) for the residues of one group: one per stretch of consecutive residues of a chain"""
+    """selections (gemmi) for the residues of one group: one per stretch of consecutive residues of a chain (a water or
+    ligand that is numbered inside a stretch is not selected)"""
     in_group = {id(n.residue) for n, l in zip(nodes, labels) if l == label}
-    sels = []
+    out = []
     for chain, residues in by_chain.items():
-        start = prev = None
+        run = []   # consecutive residues of the chain that are in the group
         for r in residues:
             if id(r) in in_group:
-                if start is None:
-                    start = r
-                prev = r
-            elif start is not None:
-                sels.append((chain, start, prev))
-                start = None
-        if start is not None:
-            sels.append((chain, start, prev))
-    out = []
-    for chain, a, b in sels:
-        sa, sb = tls_mod._seqid_str(a.seqid), tls_mod._seqid_str(b.seqid)
-        out.append(f"//{chain}/{sa}/*" if sa == sb else f"//{chain}/{sa}-{sb}/*")
+                run.append(r)
+            elif run:
+                out += tls_mod.range_selections(chain, run, residues.blockers)
+                run = []
+        if run:
+            out += tls_mod.range_selections(chain, run, residues.blockers)
     return out
 
 def groups_from_labels(nodes, labels, by_chain):
@@ -317,23 +328,111 @@ def group_bfit_chi2(nodes, labels, atoms_choice="all"):
         natoms += len(b)
     return total, natoms
 
-def partitions(nodes, by_chain, args, edges, enm, w, V):
-    """{k: (labels, groups)} for k = 1 .. max_groups domains (a number is left out if the cleaning gave the
-    same partition as a smaller one)"""
+# ---------------------------------------------------------------------------------------------------
+# networks and domains
+class Network:
+    """One elastic network: its nodes (indices into the list of all nodes), their positions, the springs (local
+    indices) and the lowest modes"""
+    def __init__(self, members, pos, edges, w, V):
+        self.members, self.pos, self.edges, self.w, self.V = members, pos, edges, w, V
+
+def build_networks(nodes, enm, cutoff, nmodes, scope="complex", min_nodes=0):
+    """scope 'complex': ONE network over all polymer chains, so that the architecture of the assembly (the springs
+    between neighbouring chains) shapes the modes; 'chain': a network for every chain on its own. In the second case
+    chains with fewer than min_nodes residues are left out."""
     pos = numpy.array([n.pos for n in nodes])
-    dist = edge_dissimilarity(pos, edges, enm, w, V)
-    A = graph_affinity(len(nodes), edges, dist)
-    ret, seen = {}, set()
-    for k in range(1, args.max_groups + 1):
-        labels = clean_labels(spectral_labels(A, k), A, args.min_fragment, args.min_residues)
-        if getattr(args, "min_stretch", 0) > 1:
-            labels = clean_labels(smooth_stretches(labels, nodes, A, args.min_stretch), A, args.min_fragment, args.min_residues)
-        key = tuple(labels)
-        if key in seen:
+    chain_of = numpy.array([n.chain for n in nodes])
+    if scope == "complex":
+        member_sets = [numpy.arange(len(nodes))]
+    else:
+        member_sets = [numpy.where(chain_of == c)[0] for c in dict.fromkeys(chain_of.tolist())]
+        member_sets = [m for m in member_sets if len(m) >= max(min_nodes, nmodes + 8)]
+    nets = []
+    for members in member_sets:
+        edges, w, V = network_modes(pos[members], enm, cutoff, nmodes)
+        nets.append(Network(members, pos[members], edges, w, V))
+    return nets
+
+class Unit:
+    """A set of nodes that is clustered on its own: a chain (default) or a whole network. A: weighted contact graph"""
+    def __init__(self, chain, members, A):
+        self.chain, self.members, self.A = chain, members, A
+
+def make_units(nodes, networks, enm, confine):
+    units = []
+    for net in networks:
+        chain_ids = numpy.array([nodes[g].chain for g in net.members])
+        dist = edge_dissimilarity(net.pos, net.edges, enm, net.w, net.V, chain_ids)
+        if not confine:
+            units.append(Unit(None, net.members, graph_affinity(len(net.members), net.edges, dist)))
             continue
-        seen.add(key)
-        ret[k] = (labels, groups_from_labels(nodes, labels, by_chain))
-    return ret
+        for c in dict.fromkeys(chain_ids.tolist()):
+            m = chain_ids == c
+            sel = numpy.where(m)[0]
+            keep = m[net.edges[:, 0]] & m[net.edges[:, 1]]       # only the springs inside the chain
+            remap = -numpy.ones(len(m), dtype=int)
+            remap[sel] = numpy.arange(len(sel))
+            units.append(Unit(c, net.members[sel], graph_affinity(len(sel), remap[net.edges[keep]], dist[keep])))
+    return units
+
+class DomainFinder:
+    """Domains from the modes of the networks. By default (span_chains off) every chain is clustered on its own, using
+    the modes of the network it is in, so that a group never contains residues of two chains and a number of domains
+    means domains per chain. With span_chains the whole network is clustered at once and a domain may consist of
+    several chains."""
+    def __init__(self, nodes, by_chain, args, networks, enm):
+        self.nodes, self.by_chain, self.args = nodes, by_chain, args
+        self.confine = not getattr(args, "span_chains", False)
+        self.units = [u for u in make_units(nodes, networks, enm, self.confine) if len(u.members) >= args.min_residues]
+        self.cache = {}
+
+    def chain_names(self):
+        return [u.chain for u in self.units]
+
+    def capacity(self, unit):
+        return max(1, len(unit.members) // self.args.min_residues)
+
+    def labels_for(self, k_of):
+        """label (group number) of every node, -1 for nodes in no group; k_of(unit): number of domains of the unit"""
+        labels = -numpy.ones(len(self.nodes), dtype=int)
+        off = 0
+        for u in self.units:
+            k = min(k_of(u), self.capacity(u))
+            key = (id(u), k)
+            if key not in self.cache:
+                self.cache[key] = self._cluster(u, k)
+            lab = self.cache[key]
+            labels[u.members] = lab + off
+            off += int(lab.max()) + 1
+        return labels
+
+    def _cluster(self, u, k):
+        a = self.args
+        if k <= 1:
+            return numpy.zeros(len(u.members), dtype=int)
+        lab = clean_labels(spectral_labels(u.A, k), u.A, a.min_fragment, a.min_residues)
+        if getattr(a, "min_stretch", 0) > 1:
+            local = [Node(self.nodes[g].chain, self.nodes[g].residue, self.nodes[g].pos, i) for i, g in enumerate(u.members)]
+            lab = clean_labels(smooth_stretches(lab, local, u.A, a.min_stretch), u.A, a.min_fragment, a.min_residues)
+        return lab
+
+    def result(self, labels):
+        return labels, groups_from_labels(self.nodes, labels, self.by_chain)
+
+    def scan(self):
+        """{k: (labels, groups)} for k = 1 .. max_groups (per chain, or in total with span_chains); a number is left
+        out if it gives the same partition as a smaller one"""
+        ret, seen = {}, set()
+        for k in range(1, self.args.max_groups + 1):
+            labels = self.labels_for(lambda u: k)
+            key = tuple(labels)
+            if key not in seen:
+                seen.add(key)
+                ret[k] = self.result(labels)
+        return ret
+
+def partitions(nodes, by_chain, args, networks, enm):
+    return DomainFinder(nodes, by_chain, args, networks, enm).scan()
 
 # ---------------------------------------------------------------------------------------------------
 # command
@@ -346,7 +445,11 @@ def add_arguments(parser):
         add(g, "--cutoff", type=float, metavar="A", show="15 for anm, 10 for gnm",
             help="Residues closer than this (Angstrom, C-alpha / C4') are connected by a spring")
         add(g, "--nmodes", type=int, default=10, metavar="N", help="Number of lowest-frequency modes used")
-        add(g, "--max_groups", type=int, default=6, metavar="N", help="Largest number of domains (TLS groups)")
+        add(g, "--network", choices=["complex", "chain"], default="complex",
+            help="complex: one elastic network of the whole assembly, so that the contacts between chains shape the modes; "
+            "chain: a network for every chain on its own")
+        add(g, "--max_groups", type=int, default=6, metavar="N",
+            help="Largest number of domains (TLS groups) per chain (in total with --span_chains)")
         add(g, "--min_residues", type=int, default=20, metavar="N", help="Smallest number of residues in a domain")
         add(g, "--min_fragment", type=int, default=5, metavar="N",
             help="A piece of a domain that is separate in space and smaller than this is given to its neighbour")
@@ -367,16 +470,21 @@ def add_arguments(parser):
         add(g, "-j", "--jobs", type=int, default=0, metavar="N", show="0 = all available CPUs",
             help="Number of trial refinements run in parallel, with --hklin")
         g = parser.add_argument_group("Normal-mode domains: options (off unless given)")
-        add(g, "--ngroups", type=int, metavar="N", show="none: scan 1 .. --max_groups",
-            help="Use exactly this number of domains")
+        add(g, "--ngroups", nargs="+", metavar="N | CHAIN:N", show="none: scan 1 .. --max_groups",
+            help="Use exactly this number of domains in every chain (e.g. 2), or per chain (e.g. A:2 B:1; chains not "
+            "given: 1). With --span_chains: the total number")
+        add(g, "--span_chains", action="store_true",
+            help="Cluster the whole network at once, so that a domain may consist of several chains (default: every "
+            "chain is divided on its own and a group never contains two chains)")
         add(g, "--no_eval", action="store_true", help="Do not refine to get R-values (always so without --hklin)")
     refine_xtal.add_arguments(parser, after_required=own_options, hklin_required=False)
     import textwrap
     parser.usage = "{} --model FILE [--hklin FILE] [options]".format(parser.prog)
     parser.description = textwrap.fill(
         "Find domains that move together from the low-frequency normal modes of an elastic network model of the "
-        "polymer (anisotropic or Gaussian) and write them as TLS groups. A domain may consist of several stretches of "
-        "residues, or of several chains. Without --hklin only the model is read. With --hklin every number of domains "
+        "polymer (anisotropic or Gaussian) and write them as TLS groups. Every chain of the assembly is divided on its "
+        "own (--span_chains: domains of several chains), by default using the network of the whole complex. A domain "
+        "may consist of several stretches of residues. Without --hklin only the model is read. With --hklin every number of domains "
         "is also tested by refinement and R-values are reported, as 'util tls_select' does. The result is written as "
         "yaml for 'refine_xtal --tls_file' and as a PDB file with the domain number in the B-factor column.", 78)
     parser.epilog = "Example: {} --model refined.pdb --enm gnm -o tlsnma".format(parser.prog)
@@ -416,21 +524,52 @@ def main(args):
         raise SystemExit(f"Error: only {len(nodes)} polymer residues; at least {2 * args.min_residues} are needed")
     logger.writeln("Polymer chains: " + ", ".join(f"{c} ({len(r)} residues)" for c, r in by_chain.items()) + "\n")
     cutoff = args.cutoff if args.cutoff else ENM_CUTOFF[args.enm]
-    pos = numpy.array([n.pos for n in nodes])
+    span = getattr(args, "span_chains", False)
+    if span and args.network == "chain":
+        raise SystemExit("Error: --span_chains needs the network of the whole assembly (--network complex)")
     t0 = time.time()
-    edges, w, V = network_modes(pos, args.enm, cutoff, args.nmodes)
-    nc = n_components(len(nodes), edges)
-    logger.writeln(f"{args.enm.upper()}: {len(nodes)} nodes, {len(edges)} springs (cutoff {cutoff:g} A), "
-                   f"{len(w)} lowest modes, eigenvalues {w[0]:.3f} .. {w[-1]:.3f} ({time.time() - t0:.1f} s)")
-    if nc > 1:
-        logger.writeln(f"NOTE: the network has {nc} separate parts (chains or domains farther apart than the cutoff); "
-                       "they move independently")
-    parts = partitions(nodes, by_chain, args, edges, args.enm, w, V)
+    networks = build_networks(nodes, args.enm, cutoff, args.nmodes, args.network, args.min_residues)
+    if not networks:
+        raise SystemExit(f"Error: no chain with at least {args.min_residues} polymer residues")
+    for net in networks:
+        chains = [nodes[g].chain for g in net.members]
+        n_chains = len(set(chains))
+        between = int(sum(1 for a_, b_ in net.edges if chains[a_] != chains[b_]))
+        what = f"whole assembly ({n_chains} chains)" if n_chains > 1 else f"chain {chains[0]}"
+        logger.writeln(f"{args.enm.upper()} of the {what}: {len(net.members)} nodes, {len(net.edges)} springs "
+                       f"(cutoff {cutoff:g} A" + (f"; {between} between chains" if n_chains > 1 else "") + "), "
+                       f"{len(net.w)} lowest modes, eigenvalues {net.w[0]:.3f} .. {net.w[-1]:.3f}")
+        nc = n_components(len(net.members), net.edges)
+        if nc > 1 and args.network == "complex":
+            logger.writeln(f"NOTE: the network has {nc} separate parts (chains or domains farther apart than the cutoff); "
+                           "they move independently")
+    logger.writeln(f"({time.time() - t0:.1f} s) " + (
+        "Every chain is divided into domains on its own; a group never contains residues of two chains."
+        if not span else "The whole network is clustered at once; a domain may consist of several chains."))
+    finder = DomainFinder(nodes, by_chain, args, networks, args.enm)
+    skipped = [c for c, r in by_chain.items() if c not in finder.chain_names()] if not span else []
+    if skipped:
+        logger.writeln(f"NOTE: chain(s) {', '.join(skipped)} have fewer than {args.min_residues} polymer residues and are "
+                       "not in a TLS group")
+    parts = finder.scan()
     if args.ngroups:
-        if args.ngroups not in parts:
-            raise SystemExit(f"Error: no partition into {args.ngroups} domains of at least {args.min_residues} residues "
-                             f"(possible: {', '.join(map(str, sorted(parts)))})")
-        parts = {args.ngroups: parts[args.ngroups]}
+        if span:
+            try:
+                k = int(args.ngroups[0])
+            except ValueError:
+                raise SystemExit("Error: with --span_chains --ngroups is one number")
+            labels = finder.labels_for(lambda u: k)
+        else:
+            counts = ts.parse_ngroups(args.ngroups, finder.chain_names())
+            by_unit = {u.chain: counts[u.chain] for u in finder.units}
+            labels = finder.labels_for(lambda u: by_unit[u.chain])
+            for u in finder.units:
+                got = len(set(labels[u.members]))
+                if got < by_unit[u.chain]:
+                    logger.writeln(f"WARNING: chain {u.chain}: {by_unit[u.chain]} domains requested, {got} possible "
+                                   f"with at least {args.min_residues} residues")
+        res = finder.result(labels)
+        parts = {len(res[1]): res}
     t_start = time.time()
     ks = sorted(parts)
     rows, specs = [], []
@@ -472,12 +611,12 @@ def main(args):
             idx, why = ts.choose_n(M, args.min_delta, args.tie)    # idx: position in the list (0 = no TLS)
             best = rows[idx]["N"]
         else:
-            best, why = args.ngroups, "set by --ngroups"
+            best, why = rows[-1]["N"], "set by --ngroups"
         for i, r in enumerate(rows):
             r["d_" + key_sel] = (M[i - 1] - r[key_sel]) if i > 0 else float("nan")
     else:
         if args.ngroups:
-            best, why = args.ngroups, "set by --ngroups"
+            best, why = rows[-1]["N"], "set by --ngroups"
         else:
             idx, why = ts.choose_n_elbow([r["B_chi2"] for r in rows], args.min_gain)   # idx: number in the list (1-based)
             best = rows[idx - 1]["N"]
@@ -492,7 +631,8 @@ def main(args):
     df.to_csv(prefix + "_scan.csv", index=False)
     with open(prefix + "_scan.json", "w") as ofs:
         json.dump({"rows": rows, "selected_N": best_k, "reason": why, "enm": args.enm, "cutoff": cutoff,
-                   "nmodes": len(w), "groups": {str(k): parts[k][1] for k in parts}}, ofs, indent=2, default=float)
+                   "network": args.network, "span_chains": bool(span), "nmodes": min(len(net.w) for net in networks),
+                   "groups": {str(k): parts[k][1] for k in parts}}, ofs, indent=2, default=float)
     logger.writeln("\n" + "=" * 70)
     logger.writeln(f"Domains from the {args.enm.upper()} normal modes vs the number of domains")
     logger.writeln("B_rms: r.m.s. of B_obs - B_TLS (A^2) when one TLS group is fitted to the B-factors of every domain")

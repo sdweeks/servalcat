@@ -308,6 +308,21 @@ class TestBFitMethod(unittest.TestCase):
         cfg = omegaconf.OmegaConf.load(os.path.join(self.wd, "ng_tls.yaml"))
         self.assertEqual(len(cfg.refine.tls.groups), 2)
 
+class TestSelectionsAroundHetero(unittest.TestCase):
+    def test_generated_ranges_do_not_take_in_a_ligand_numbered_inside(self):
+        sys.path.insert(0, root)
+        import test_tls
+        st = test_tls.polymer_with_hetero()
+        st.setup_entities()
+        chains = tls_select.polymer_chains(st, 5)
+        self.assertEqual([c.name for c in chains], ["A"])
+        c = chains[0]
+        self.assertEqual(c.n, 19)
+        self.assertEqual(c.selections(0, c.n), ["//A/1-10/*", "//A/12-20/*"])    # NAG 11 is skipped
+        self.assertEqual(c.selections(0, 5), ["//A/1-5/*"])
+        self.assertEqual(c.selections(10, 19), ["//A/12-20/*"])
+
+
 class TestParallelHelpers(unittest.TestCase):
     def test_radiation_source_default(self):
         from servalcat.refine import refine_xtal

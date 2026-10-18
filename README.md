@@ -75,7 +75,7 @@ electron diffraction — and extends it with TLS.
 * **TLS groups from normal modes** — `servalcat util tls_nma` finds domains that move together with an anisotropic or a
   Gaussian elastic network model and writes them as TLS groups, also when a domain is internal or made of several
   stretches or chains ([below](#tls-groups-from-normal-modes-servalcat-util-tls_nma)).
-* **Smaller code base** — no cryo-EM code; a test suite (96 tests) covering the
+* **Smaller code base** — no cryo-EM code; a test suite (107 tests) covering the
   refinement options, TLS, the selection utility, sequence assignment and MTZ column selection.
 
 **Removed compared with upstream**: cryo-EM single-particle programs (`refine_spa`, `refine_spa_norefmac`,
@@ -227,7 +227,7 @@ its help line. The tables below are grouped by topic instead. Defaults are in pa
 | Option | Meaning |
 |---|---|
 | `--tls` | TLS refinement; groups from `refine.tls.groups` in the config, else from the input model |
-| `--tls_per_chain` | TLS refinement with one group per chain (when no groups are defined) |
+| `--tls_per_chain` | TLS refinement with one group per protein or nucleic-acid chain; waters and ligands are not in a group (when no groups are defined) |
 | `--tls_file FILE` | TLS definition (yaml) from a previous run (`prefix_tls.yaml`) or from `util tls_select`; replaces `refine.tls.groups` of `--config` |
 | `--tls_ncycle N` | TLS steps per refinement cycle (1) |
 
@@ -578,7 +578,7 @@ group to two, and nothing to gain beyond). Running both and comparing R-free is 
 ### TLS groups from normal modes: `servalcat util tls_nma`
 
 The third way to define groups, for **domains that move against the rest** and are not necessarily made of consecutive
-residues (an internal domain, a domain formed by two stretches, a domain of two chains). An elastic network model of the
+residues (an internal domain, a domain formed by two stretches of one chain). An elastic network model of the
 polymer residues (one node per residue: C-alpha, or C4' in nucleic acids; springs between nodes closer than a cutoff)
 gives the low-frequency normal modes, and residues that move together in those modes are clustered into domains. Two
 network models are available, `--enm anm` (default) and `--enm gnm`:
@@ -596,6 +596,12 @@ servalcat util tls_nma --model refined.pdb --enm gnm --ngroups 3 -o tlsnma
 servalcat util tls_nma --model refined.pdb --hklin data.mtz -o tlsnma  # also test every number by refinement (R-free)
 ```
 
+* **Oligomers.** The network is built on the whole complex, so the contacts between chains (homo- or hetero-oligomers) are
+  springs like any other and shape the modes (`--network complex`, default; `--network chain` builds one network per chain and ignores
+  the interfaces). The residues are then clustered chain by chain: `N` is the number of domains *per chain*, a group never spans chains,
+  and `--ngroups A:2 B:1` sets it per chain. Copies in a homo-oligomer are clustered independently (no NCS consistency is enforced).
+  Chains shorter than `--min_residues` get no group. `--span_chains` clusters the whole complex as one object (a group may then
+  contain whole chains, e.g. a dimer moving against the rest).
 * The residues are clustered by spectral clustering (normalised cut) of the contact network weighted by the similarity
   of their motion, so every domain is compact in space; pieces smaller than `--min_fragment` residues that are separate in
   space, and stretches shorter than `--min_stretch` (3) residues inside another domain, are given to their neighbours, and a domain

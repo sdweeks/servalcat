@@ -450,13 +450,64 @@ def _optional_floats(item, key, n):
         raise SystemExit(f"Error: TLS group {item.id}: {key} must have {n} values")
     return v
 
+def is_polymer_residue(res):
+    """True for a residue of a protein or nucleic-acid chain (modified residues included); False for waters, ligands,
+    glycans and other non-polymer residues. Anisotropic (TLS) treatment is meant for the polymer only."""
+    if res.is_water():
+        return False
+    if res.entity_type == gemmi.EntityType.Polymer:
+        return True
+    info = gemmi.find_tabulated_residue(res.name)
+    return info is not None and (info.is_amino_acid() or info.is_nucleic_acid())
+
+def range_selections(chain_name, residues, blockers=()):
+    """gemmi selections for the given residues (in chain order): one per stretch of consecutive residues. A stretch is
+    split where the number of a residue that must not be selected (blockers: residue numbers of waters, ligands, ..
+    of the chain) lies between two selected residues, so that a range never takes in a non-polymer residue that is
+    numbered inside the polymer."""
+    import bisect
+    blockers = sorted(set(blockers))
+    stretches, start, prev = [], None, None
+    for r in residues:
+        if start is None:
+            start = prev = r
+            continue
+        lo = bisect.bisect_right(blockers, prev.seqid.num)
+        hi = bisect.bisect_left(blockers, r.seqid.num)
+        if hi > lo:
+            stretches.append((start, prev))
+            start = r
+        prev = r
+    if start is not None:
+        stretches.append((start, prev))
+    out = []
+    for a, b in stretches:
+        sa, sb = _seqid_str(a.seqid), _seqid_str(b.seqid)
+        out.append(f"//{chain_name}/{sa}/*" if sa == sb else f"//{chain_name}/{sa}-{sb}/*")
+    return out
+
 def groups_per_chain(st):
+    """One group for the polymer residues of every chain; waters, ligands and other non-polymer residues are in no
+    group (they keep isotropic B). The selections never include them either, so that a restart from the written
+    configuration gives the same groups."""
     groups = []
     for chain in st[0]:
-        atoms = [a for res in chain for a in res]
+        residues = [r for r in chain if is_polymer_residue(r)]
+        atoms = [a for r in residues for a in r]
         if atoms:
-            groups.append(TlsGroup(len(groups) + 1, atoms, [f"//{chain.name}/*"]))
+            blockers = [r.seqid.num for r in chain if not is_polymer_residue(r)]
+            groups.append(TlsGroup(len(groups) + 1, atoms, range_selections(chain.name, residues, blockers)))
     return groups
+
+def report_non_polymer(st, groups):
+    """Groups that are defined by the user (or taken from a model) may include waters or ligands; say so"""
+    nonpoly = {a.serial for chain in st[0] for r in chain if not is_polymer_residue(r) for a in r}
+    for g in groups:
+        n = sum(1 for a in g.atoms if a.serial in nonpoly)
+        if n:
+            logger.writeln(f"NOTE: TLS group {g.id} includes {n} atoms of non-polymer residues (waters, ligands). Anisotropic "
+                           "treatment is usually meant for protein and nucleic-acid chains only; use ranges of the polymer "
+                           "residues if they should keep isotropic B.")
 
 _RE_TLS_VALUE = re.compile(r"([TLS][123][123]):\s*(-?\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)")
 _RE_SEQ = re.compile(r"^(-?\d+)([A-Za-z]?)$")
@@ -572,13 +623,18 @@ def setup_tls(st, cfg_tls, per_chain=False, ncycle=None, specials=(), exclude_h_
             logger.writeln(f"TLS: {len(groups)} group(s) taken from the input model")
         elif per_chain:
             groups = groups_per_chain(st)
-            logger.writeln(f"TLS: one group per chain ({len(groups)} groups)")
+            if not groups:
+                raise SystemExit("Error: --tls_per_chain: the model has no protein or nucleic-acid chain")
+            logger.writeln(f"TLS: one group per polymer chain ({len(groups)} groups); waters, ligands and other "
+                           "non-polymer residues are not in a group")
         else:
             raise SystemExit("Error: TLS refinement requested, but no TLS groups are defined. Give "
                              "refine.tls.groups in the config file, provide a model with TLS groups, "
                              "or use --tls_per_chain.")
     if ncycle is None:
         ncycle = cfg_tls.ncycle
+    if cfg_tls.groups or from_model:
+        report_non_polymer(st, groups)
     for g in groups:
         if g.has_params: # the group may have moved since T, L, S were determined (rebuilding)
             shift = g.recenter()

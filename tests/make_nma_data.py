@@ -74,3 +74,22 @@ def accuracy(labels, truth):
         m = {l: perm[i] for i, l in enumerate(labs)}
         best = max(best, sum(1 for l, t in zip(labels, truth) if m[l] == tr[perm[0]] * 0 + t) / len(truth))
     return best
+
+
+def oligomer(layout, copies=3, ring_radius=20.0, seed=0, separation=34.0):
+    """A ring of `copies` identical chains (A, B, C, ..) that touch their neighbours, each built as in build(): a homo-oligomer.
+    Returns (structure, truth) where truth is the domain index of every residue, chain after chain."""
+    st, truth = build(layout, seed=seed, separation=separation)
+    clones = []                               # clone first, add afterwards (adding a chain invalidates references to chains)
+    for c in range(1, copies):
+        ang = 2 * numpy.pi * c / copies
+        shift = numpy.array([ring_radius * (numpy.cos(ang) - 1), ring_radius * numpy.sin(ang), 0.0])
+        ch = st[0]["A"].clone()
+        ch.name = chr(ord("A") + c)
+        for r in ch:
+            for a in r:
+                a.pos = gemmi.Position(a.pos.x + shift[0], a.pos.y + shift[1], a.pos.z + shift[2])
+        clones.append(ch)
+    for ch in clones:
+        st[0].add_chain(ch)
+    return st, numpy.tile(truth, copies)

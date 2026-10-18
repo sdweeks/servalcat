@@ -72,6 +72,86 @@ class TestTlsMath(unittest.TestCase):
         self.assertGreaterEqual(numpy.linalg.eigvalsh(tls.sym33(q[0:6])).min(), -1e-12)
         numpy.testing.assert_allclose(q[6:12], p[6:12])
 
+def polymer_with_hetero():
+    """chain A: residues 1-10 and 12-20 (a loop is missing at 11), a glycan NAG numbered 11 INSIDE the numbering of the
+    polymer, waters 101-103 and a ligand; plus a chain W that only has waters"""
+    sys.path.insert(0, root)
+    import make_seq_data as msd
+    st = msd.build([msd.chain("A", "ACDEFGHIKLMNPQRSTVWY", "AA", missing=[11])])
+    ch = st[0]["A"]
+    def add(name, num, atoms, entity, het="H"):
+        r = gemmi.Residue()
+        r.name, r.seqid, r.het_flag, r.entity_type = name, gemmi.SeqId(num, " "), het, entity
+        for i, an in enumerate(atoms):
+            a = gemmi.Atom()
+            a.name, a.element, a.occ, a.b_iso = an, gemmi.Element(an[0]), 1.0, 30.0
+            a.pos = gemmi.Position(3.8 * num + i, 5.0, 5.0)
+            r.add_atom(a)
+        ch.add_residue(r)
+    add("NAG", 11, ["C1", "C2", "O5"], gemmi.EntityType.NonPolymer)
+    for n in (101, 102, 103):
+        add("HOH", n, ["O"], gemmi.EntityType.Water)
+    add("GOL", 201, ["C1", "O1"], gemmi.EntityType.NonPolymer)
+    w = gemmi.Chain("W")
+    r = gemmi.Residue()
+    r.name, r.seqid, r.het_flag, r.entity_type = "HOH", gemmi.SeqId(1, " "), "H", gemmi.EntityType.Water
+    a = gemmi.Atom()
+    a.name, a.element, a.occ = "O", gemmi.Element("O"), 1.0
+    r.add_atom(a)
+    w.add_residue(r)
+    st[0].add_chain(w)
+    return st
+
+class TestPolymerOnlyGroups(unittest.TestCase):
+    """TLS (anisotropic) treatment is for protein and nucleic-acid chains: waters, ligands and glycans are not in the groups"""
+    def test_polymer_residues(self):
+        st = polymer_with_hetero()
+        kinds = {r.name: tls.is_polymer_residue(r) for r in st[0]["A"]}
+        self.assertTrue(kinds["ALA"] and kinds["TYR"])
+        self.assertFalse(kinds["HOH"] or kinds["NAG"] or kinds["GOL"])
+
+    def test_range_selections_skip_residues_numbered_inside(self):
+        st = polymer_with_hetero()
+        ch = st[0]["A"]
+        poly = [r for r in ch if tls.is_polymer_residue(r)]
+        blockers = [r.seqid.num for r in ch if not tls.is_polymer_residue(r)]
+        self.assertEqual(tls.range_selections("A", poly, blockers), ["//A/1-10/*", "//A/12-20/*"])  # NAG 11 is skipped
+        self.assertEqual(tls.range_selections("A", poly, []), ["//A/1-20/*"])
+        self.assertEqual(tls.range_selections("A", [], blockers), [])
+
+    def test_groups_per_chain(self):
+        st = polymer_with_hetero()
+        groups = tls.groups_per_chain(st)
+        self.assertEqual(len(groups), 1)                       # the chain of waters gets no group
+        g = groups[0]
+        self.assertEqual(len(g.atoms), sum(len(r) for r in st[0]["A"] if tls.is_polymer_residue(r)))
+        self.assertEqual(g.selections, ["//A/1-10/*", "//A/12-20/*"])
+        # the selections select exactly the atoms of the group (a restart from the written file gives the same group)
+        from servalcat.refine.refine import iterate_selection
+        serial = {a.serial for a in g.atoms}
+        n = 0
+        for sel in g.selections:
+            for _, _, res, atom in iterate_selection(sel, st):
+                self.assertTrue(tls.is_polymer_residue(res), res.name)
+                n += 1
+        self.assertEqual(n, len(g.atoms))
+
+    def test_user_groups_with_waters_are_reported(self):
+        st = polymer_with_hetero()
+        for i, cra in enumerate(st[0].all()):
+            cra.atom.serial = i + 1
+        item = type("Item", (), {"id": 1, "selections": ["//A/*"]})()
+        groups = tls.groups_from_selections(st, [item])
+        lines = []
+        old = tls.logger.writeln
+        tls.logger.writeln = lines.append
+        try:
+            tls.report_non_polymer(st, groups)
+        finally:
+            tls.logger.writeln = old
+        self.assertEqual(len(lines), 1)
+        self.assertIn("TLS group 1 includes 8 atoms of non-polymer residues", lines[0])    # NAG 3 + 3 waters + GOL 2
+
 class TestTlsRefine(unittest.TestCase):
     def setUp(self):
         self.wd = tempfile.mkdtemp(prefix="servaltest_")
@@ -166,6 +246,36 @@ class TestTlsRefine(unittest.TestCase):
                 r0[name] = json.load(f)[0]["data"]["summary"]["Rwork"]
         self.assertAlmostEqual(r0["restart"], r_first, delta=0.005)  # continues where it stopped
         self.assertGreater(r0["naive"] - r0["restart"], 0.01)         # starting from T=L=S=0 does not
+
+    def test_tls_per_chain_is_polymer_only(self):
+        # 1l2h has 126 waters: they must stay isotropic and be in no group, also after a restart from the written file
+        wd = tempfile.mkdtemp(prefix="servaltest_")
+        os.chdir(wd)
+        try:
+            import make_tls_data
+            make_tls_data.make(".")
+            n_poly = sum(len(r) for r in gemmi.read_structure("start.pdb")[0]["A"] if tls.is_polymer_residue(r))
+            sys.argv = ["", "refine_xtal", "--model", "start.pdb", "--hklin", "data.mtz", "-s", "xray", "--labin", "FP,SIGFP,FreeR_flag",
+                        "--no_solvent", "--hydrogen", "no", "--ncycle", "2", "--tls_per_chain", "-o", "pc"]
+            main()
+            log = open("pc.log").read()
+            self.assertIn("one group per polymer chain", log)
+            self.assertIn(f"group 1: {n_poly} atoms", log)
+            n_water_aniso = sum(1 for l in open("pc.pdb") if l.startswith("ANISOU") and l[17:20] == "HOH")
+            self.assertEqual(n_water_aniso, 0)
+            self.assertEqual(sum(1 for l in open("pc.pdb") if l.startswith("ANISOU")), n_poly)
+            import omegaconf
+            cfg = omegaconf.OmegaConf.load("pc_tls.yaml")
+            self.assertEqual(len(cfg.refine.tls.groups), 1)
+            sel = cfg.refine.tls.groups[0].selections[0]
+            self.assertNotEqual(sel, "//A/*")                     # a range of the polymer, not the whole chain
+            sys.argv = ["", "refine_xtal", "--model", "pc.pdb", "--hklin", "data.mtz", "-s", "xray", "--labin", "FP,SIGFP,FreeR_flag",
+                        "--no_solvent", "--hydrogen", "no", "--ncycle", "1", "--tls_file", "pc_tls.yaml", "-o", "pc2"]
+            main()
+            self.assertIn(f"group 1: {n_poly} atoms", open("pc2.log").read())
+        finally:
+            os.chdir(root)
+            shutil.rmtree(wd)
 
     def test_tls_errors(self):
         hklin = os.path.join(root, "biotin", "biotin_talos.mtz")

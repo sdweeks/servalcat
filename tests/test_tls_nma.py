@@ -94,10 +94,9 @@ class TestDomains(unittest.TestCase):
     def find(self, enm, layout, seed=0, separation=32.0, k=2, **kw):
         st, truth = md.build(layout, seed=seed, separation=separation)
         nodes, by_chain = nma.collect_nodes(st)
-        pos = numpy.array([n.pos for n in nodes])
         args = types.SimpleNamespace(max_groups=k, min_fragment=5, min_residues=20, min_stretch=3, **kw)
-        edges, w, V = nma.network_modes(pos, enm, nma.ENM_CUTOFF[enm], 10)
-        return nma.partitions(nodes, by_chain, args, edges, enm, w, V), truth
+        networks = nma.build_networks(nodes, enm, nma.ENM_CUTOFF[enm], 10)
+        return nma.partitions(nodes, by_chain, args, networks, enm), truth
 
     def test_internal_domain_is_found_with_both_models(self):
         # residues 41-80 form an internal domain, the flanks 1-40 and 81-120 the other one
@@ -122,10 +121,9 @@ class TestDomains(unittest.TestCase):
                 self.assertEqual(len(set(labels[truth == d])), 1, enm)   # every true domain is one group
 
     def test_two_chains_in_one_domain(self):
-        # a domain of two chains: chain B of 40 residues sits next to the first half of chain A
+        # with span_chains a domain may consist of several chains: chain B of 40 residues next to the first half of chain A
         st, truth = md.build([(0, 40), (1, 40)], seed=0, separation=34.0)
         ch = st[0]["A"]
-        # move the last 40 residues to a second chain: the second domain is formed by chain B only, domain 0 by chain A
         chB = gemmi.Chain("B")
         for i in range(40, 80):
             chB.add_residue(ch[i])
@@ -133,10 +131,9 @@ class TestDomains(unittest.TestCase):
             del ch[i]
         st[0].add_chain(chB)
         nodes, by_chain = nma.collect_nodes(st)
-        pos = numpy.array([n.pos for n in nodes])
-        args = types.SimpleNamespace(max_groups=2, min_fragment=5, min_residues=20, min_stretch=3)
-        edges, w, V = nma.network_modes(pos, "anm", 15.0, 10)
-        parts = nma.partitions(nodes, by_chain, args, edges, "anm", w, V)
+        args = types.SimpleNamespace(max_groups=2, min_fragment=5, min_residues=20, min_stretch=3, span_chains=True)
+        networks = nma.build_networks(nodes, "anm", 15.0, 10)
+        parts = nma.partitions(nodes, by_chain, args, networks, "anm")
         self.assertEqual(sorted(map(sorted, parts[2][1])), [["//A/1-40/*"], ["//B/41-80/*"]])
 
     def test_cleaning(self):
@@ -211,9 +208,11 @@ class TestCommand(unittest.TestCase):
         st = gemmi.read_structure("ng_domains.pdb")
         vals = {round(a.atom.b_iso) for a in st[0].all()}
         self.assertEqual(vals, {1, 2})
-        sys.argv = ["", "util", "tls_nma", "--model", "pseudo.pdb", "--ngroups", "9", "-o", "bad"]
-        with self.assertRaises(SystemExit):
-            main()
+        # more domains than the chain can have (120 residues, at least 20 per domain): clipped, with a warning
+        sys.argv = ["", "util", "tls_nma", "--model", "pseudo.pdb", "--ngroups", "9", "-o", "many"]
+        main()
+        self.assertRegex(open("many.log").read(), r"WARNING: chain A: 9 domains requested, \d possible")
+        self.assertLessEqual(len(self.groups("many_tls.yaml")), 6)
 
     def test_help_layout(self):
         p = argparse.ArgumentParser(prog="servalcat test")
@@ -243,6 +242,118 @@ class TestWithReflections(unittest.TestCase):
             for k in ("Rwork", "Rfree", "B_rms"):
                 self.assertIn(k, df.columns)
             self.assertGreater(df.Rfree[0] - df.Rfree[1], 0.005)    # TLS helps
+        finally:
+            os.chdir(root)
+            shutil.rmtree(wd)
+
+
+class TestAssemblies(unittest.TestCase):
+    """homo- and hetero-oligomers: the chains are divided on their own (default), the network is that of the assembly"""
+    LAYOUT = [(0, 40), (1, 40), (0, 40)]
+
+    def ring(self, copies=3):
+        return md.oligomer(self.LAYOUT, copies=copies)
+
+    def run_partitions(self, st, enm="anm", network="complex", k=2, **kw):
+        nodes, by_chain = nma.collect_nodes(st)
+        args = types.SimpleNamespace(max_groups=k, min_fragment=5, min_residues=20, min_stretch=3, **kw)
+        networks = nma.build_networks(nodes, enm, nma.ENM_CUTOFF[enm], 10, network, args.min_residues)
+        return nodes, nma.partitions(nodes, by_chain, args, networks, enm), networks
+
+    def chains_in(self, group):
+        return {s.split("/")[2] for s in group}
+
+    def test_the_network_of_the_assembly_has_springs_between_the_chains(self):
+        st, truth = self.ring()
+        nodes, parts, networks = self.run_partitions(st)
+        self.assertEqual(len(networks), 1)
+        chains = [nodes[g].chain for g in networks[0].members]
+        between = sum(1 for a, b in networks[0].edges if chains[a] != chains[b])
+        self.assertGreater(between, 20)
+        self.assertEqual(nma.n_components(len(nodes), networks[0].edges), 1)       # the ring is one connected assembly
+        nodes, parts, networks = self.run_partitions(st, network="chain")
+        self.assertEqual(len(networks), 3)                                          # chain by chain
+
+    def test_homo_oligomer_is_divided_chain_by_chain(self):
+        for enm in ("anm", "gnm"):
+            for scope in ("complex", "chain"):
+                st, truth = self.ring()
+                nodes, parts, _ = self.run_partitions(st, enm, scope, k=2)
+                labels, groups = parts[1]                       # one domain per chain: three groups, never one for all
+                self.assertEqual(len(groups), 3, (enm, scope))
+                self.assertEqual([self.chains_in(g) for g in groups], [{"A"}, {"B"}, {"C"}])
+                labels, groups = parts[2]
+                self.assertEqual(len(groups), 6, (enm, scope))
+                for g in groups:
+                    self.assertEqual(len(self.chains_in(g)), 1, "a group must not contain two chains")
+                for c in "ABC":
+                    sel = sorted(sorted(g) for g in groups if self.chains_in(g) == {c})
+                    self.assertEqual(sel, [[f"//{c}/1-40/*", f"//{c}/81-120/*"], [f"//{c}/41-80/*"]], (enm, scope))
+
+    def test_span_chains_allows_domains_of_several_chains(self):
+        st, truth = self.ring()
+        nodes, parts, _ = self.run_partitions(st, span_chains=True)
+        labels, groups = parts[1]
+        self.assertEqual(len(groups), 1)                         # the old behaviour: one group for the whole assembly
+        self.assertEqual(self.chains_in(groups[0]), {"A", "B", "C"})
+
+    def test_hetero_oligomer_with_numbers_of_domains_per_chain(self):
+        # chain A: three stretches of two domains; chain B: one compact domain of 60 residues next to it; peptide P: 10 residues
+        stA, truthA = md.build([(0, 40), (1, 40), (0, 40)], seed=0, separation=34.0)
+        stB, _ = md.build([(0, 60)], seed=3)
+        chB = stB[0]["A"].clone()
+        chB.name = "B"
+        for r in chB:
+            for a in r:
+                a.pos = gemmi.Position(a.pos.x + 30, a.pos.y + 20, a.pos.z)
+        stP, _ = md.build([(0, 10)], seed=5)
+        chP = stP[0]["A"].clone()
+        chP.name = "P"
+        for r in chP:
+            for a in r:
+                a.pos = gemmi.Position(a.pos.x - 25, a.pos.y, a.pos.z + 40)
+        stA[0].add_chain(chB)
+        stA[0].add_chain(chP)
+        nodes, by_chain = nma.collect_nodes(stA)
+        args = types.SimpleNamespace(max_groups=3, min_fragment=5, min_residues=20, min_stretch=3)
+        networks = nma.build_networks(nodes, "anm", 15.0, 10)
+        finder = nma.DomainFinder(nodes, by_chain, args, networks, "anm")
+        self.assertEqual(finder.chain_names(), ["A", "B"])        # the 10-residue peptide is not in a group
+        counts = {"A": 2, "B": 1}
+        labels = finder.labels_for(lambda u: counts[u.chain])
+        labels, groups = finder.result(labels)
+        self.assertEqual(sorted(sorted(g) for g in groups),
+                         [["//A/1-40/*", "//A/81-120/*"], ["//A/41-80/*"], ["//B/1-60/*"]])
+        self.assertTrue((labels[-10:] == -1).all())               # the peptide: no group
+
+    def test_command_on_an_assembly_writes_groups_per_chain(self):
+        wd = tempfile.mkdtemp(prefix="servaltest_")
+        os.chdir(wd)
+        try:
+            st, truth = self.ring()
+            utils.fileio.write_model(st, "ring", pdb=True)
+            sys.argv = ["", "util", "tls_nma", "--model", "ring.pdb", "--max_groups", "2", "-o", "r"]
+            main()
+            import omegaconf
+            groups = [list(g.selections) for g in omegaconf.OmegaConf.load("r_tls_N1.yaml").refine.tls.groups]
+            self.assertEqual(len(groups), 3)
+            dom = pandas.read_csv("r_domains_N2.csv")
+            self.assertEqual(sorted(set(dom.domain)), [1, 2, 3, 4, 5, 6])
+            for d, rows in dom.groupby("domain"):
+                self.assertEqual(len(set(rows.chain)), 1, f"domain {d} spans chains")
+            log = open("r.log").read()
+            self.assertIn("whole assembly (3 chains)", log)
+            self.assertIn("between chains", log)
+            self.assertIn("never contains residues of two chains", log)
+            # per-chain numbers of domains
+            sys.argv = ["", "util", "tls_nma", "--model", "ring.pdb", "--ngroups", "A:2", "B:1", "-o", "pc"]
+            main()
+            groups = [list(g.selections) for g in omegaconf.OmegaConf.load("pc_tls.yaml").refine.tls.groups]
+            self.assertEqual(len(groups), 2 + 1 + 1)                # A: 2, B: 1, C: 1 (chains not given: 1)
+            # --span_chains needs the network of the assembly
+            sys.argv = ["", "util", "tls_nma", "--model", "ring.pdb", "--network", "chain", "--span_chains", "-o", "bad"]
+            with self.assertRaises(SystemExit):
+                main()
         finally:
             os.chdir(root)
             shutil.rmtree(wd)

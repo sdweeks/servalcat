@@ -370,16 +370,17 @@ def parse_ngroups(items, chain_names):
 # ---------------------------------------------------------------------------------------------------
 # model-dependent part
 class Chain:
-    def __init__(self, name, residues):
+    def __init__(self, name, residues, blockers=()):
         self.name = name
         self.residues = residues # gemmi residues of the polymer, in order
+        self.blockers = sorted(blockers) # numbers of the non-polymer residues (waters, ligands) of the chain
         self.n = len(residues)
         self.atoms = [a for r in residues for a in r]
         self.res_index = numpy.array([i for i, r in enumerate(residues) for _ in r])
 
-    def selection(self, i, j):
-        """gemmi selection string for residues i .. j-1"""
-        return f"//{self.name}/{tls_mod._seqid_str(self.residues[i].seqid)}-{tls_mod._seqid_str(self.residues[j - 1].seqid)}/*"
+    def selections(self, i, j):
+        """gemmi selections for residues i .. j-1: one range, or several if a water or ligand is numbered inside it"""
+        return tls_mod.range_selections(self.name, self.residues[i:j], self.blockers)
 
     def ranges(self, bounds):
         return [(self.residues[i].seqid, self.residues[j - 1].seqid) for i, j in zip(bounds[:-1], bounds[1:])]
@@ -398,7 +399,8 @@ def polymer_chains(st, min_residues):
         if len(poly) < min_residues:
             logger.writeln(f"Chain {ch.name}: only {len(poly)} polymer residues; not used")
             continue
-        chains.append(Chain(ch.name, poly))
+        in_polymer = {r.seqid.num for r in poly}
+        chains.append(Chain(ch.name, poly, [r.seqid.num for r in ch if r.seqid.num not in in_polymer]))
     return chains
 
 def partitions_for_chains(ctx, chains, args):
@@ -683,7 +685,7 @@ def main(args):
             gain, bounds = resolve(name, k)
             pred += gain
             desc[name] = c.ranges(bounds)
-            groups += [[c.selection(i, j)] for i, j in zip(bounds[:-1], bounds[1:])]
+            groups += [c.selections(i, j) for i, j in zip(bounds[:-1], bounds[1:])]
         return groups, desc, pred
 
     def items_for(counts): # (chain, residue, group number) for every residue; groups are numbered as in the yaml

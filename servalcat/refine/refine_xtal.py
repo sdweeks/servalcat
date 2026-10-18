@@ -136,7 +136,7 @@ def add_arguments(parser, after_required=None, hklin_required=True):
     _add(g, "--tls", action="store_true",
          help="TLS refinement with isotropic residual B; the groups come from refine.tls.groups in --config, "
          "or from the input model")
-    _add(g, "--tls_per_chain", action="store_true", help="TLS refinement with one group per chain, if no groups are defined")
+    _add(g, "--tls_per_chain", action="store_true", help="TLS refinement with one group per protein or nucleic-acid chain (waters and ligands are left out), if no groups are defined")
     _add(g, "--tls_file", metavar="FILE", show="none",
          help="TLS definition (yaml) from a previous run (PREFIX_tls.yaml) or from 'util tls_select'; "
          "use it to continue after editing the model")
