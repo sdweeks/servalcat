@@ -22,6 +22,11 @@ import gemmi
 from servalcat import utils
 from servalcat.refine import tls_select
 from servalcat.__main__ import main
+try:
+    import matplotlib
+    HAVE_MPL = True
+except ImportError:
+    HAVE_MPL = False
 
 root = os.path.abspath(os.path.dirname(__file__))
 
@@ -158,6 +163,9 @@ class TestTlsSelect(unittest.TestCase):
             self.assertIn(k, df.columns)
         self.assertGreater(df.Rfree[0] - df.Rfree[1], 0.005) # TLS helps
         self.assertTrue(os.path.isfile("bfev_tls_N2.yaml"))
+        self.assertFalse(os.path.exists("bfev_trials")) # removed after the trial refinements
+        if HAVE_MPL:
+            self.assertTrue(os.path.isfile("bfev_scan.png"))
 
     def test_source_defaults_to_xray(self):
         # no -s/--source: X-ray is the default
@@ -197,6 +205,9 @@ class TestTlsSelect(unittest.TestCase):
         for fn in ("scan_tls.yaml", "scan_tls_N1.yaml", "scan_tls_N2.yaml", "scan_tls_N3.yaml"):
             self.assertTrue(os.path.isfile(fn), fn)
         self.assertEqual(len(self.read_ranges("scan_tls.yaml")), 2)
+        self.assertFalse(os.path.exists("scan_trials")) # removed after the trial refinements
+        if HAVE_MPL:
+            self.assertTrue(os.path.isfile("scan_scan.png"))
         for n in (1, 2, 3):
             self.check_domain_files(f"scan_domains_N{n}.csv", None, f"scan_tls_N{n}.yaml", n)
         self.check_domain_files("scan_domains_N2.csv", "scan_domains.pdb", "scan_tls.yaml", 2)   # the recommendation
@@ -212,6 +223,13 @@ class TestTlsSelect(unittest.TestCase):
             self.assertTrue(numpy.allclose(a[k], b[k], rtol=0, atol=1e-9), k)
         self.assertIn("in parallel on 3 processes", open("par.log").read())
         self.assertIn("one after another", open("ser.log").read())
+
+    def test_ngroups_with_evaluation(self):
+        # --ngroups without --no_eval: the definition is compared with no TLS by two trial refinements
+        self.run_select(["--ngroups", "2", "--tls_cycles", "2", "-d", "2.5"], prefix="ngev")
+        self.assertEqual(len(self.read_ranges("ngev_tls.yaml")), 2)
+        self.assertRegex(open("ngev.log").read(), r"2 groups\s+Rwork=")
+        self.assertFalse(os.path.exists("ngev_trials"))
 
     def test_failing_trial_is_reported(self):
         args = argparse.ArgumentParser()
@@ -333,6 +351,25 @@ class TestParallelHelpers(unittest.TestCase):
             self.assertEqual(p.parse_args(extra).source, "xray")
             self.assertEqual(p.parse_args(extra + ["-s", "neutron"]).source, "neutron")
             self.assertEqual(p.parse_args(extra + ["--source", "electron"]).source, "electron")
+
+    def test_trial_directory_is_removed(self):
+        wd = tempfile.mkdtemp(prefix="servaltest_")
+        try:
+            d = os.path.join(wd, "x_trials")
+            with tls_select.trial_directory(d):
+                self.assertTrue(os.path.isdir(d))
+                open(os.path.join(d, "n1.log"), "w").close()
+            self.assertFalse(os.path.exists(d))
+            with self.assertRaises(RuntimeError): # also after an error in a trial
+                with tls_select.trial_directory(d):
+                    raise RuntimeError
+            self.assertFalse(os.path.exists(d))
+            os.makedirs(d)                        # a folder that was there before is left alone
+            with tls_select.trial_directory(d):
+                pass
+            self.assertTrue(os.path.isdir(d))
+        finally:
+            shutil.rmtree(wd)
 
     def test_available_cpus(self):
         n = tls_select.available_cpus()

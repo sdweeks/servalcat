@@ -21,6 +21,11 @@ import gemmi
 from servalcat import utils
 from servalcat.refine import tls_nma as nma
 from servalcat.__main__ import main
+try:
+    import matplotlib
+    HAVE_MPL = True
+except ImportError:
+    HAVE_MPL = False
 
 root = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, root)
@@ -201,6 +206,9 @@ class TestCommand(unittest.TestCase):
             self.assertEqual(set(dom.domain), {1, 2})
             self.assertEqual(set(dom[dom.resi.between(41, 80)].domain.tolist()), {int(dom.domain[40])})
             self.assertTrue(os.path.isfile(p + "_scan.json") and os.path.isfile(p + "_tls.yaml"))
+            if HAVE_MPL:
+                self.assertTrue(os.path.isfile(p + "_scan.png")) # B_rms vs N (no reflection data)
+            self.assertFalse(os.path.exists(p + "_trials"))
 
     def test_domains_pdb_and_ngroups(self):
         self.run_cmd(["--ngroups", "2"], "ng")
@@ -242,6 +250,9 @@ class TestWithReflections(unittest.TestCase):
             for k in ("Rwork", "Rfree", "B_rms"):
                 self.assertIn(k, df.columns)
             self.assertGreater(df.Rfree[0] - df.Rfree[1], 0.005)    # TLS helps
+            self.assertFalse(os.path.exists("ev_trials"))           # removed after the trial refinements
+            if HAVE_MPL:
+                self.assertTrue(os.path.isfile("ev_scan.png"))      # R vs N
         finally:
             os.chdir(root)
             shutil.rmtree(wd)

@@ -27,6 +27,7 @@ import csv
 import json
 import os
 import re
+import shutil
 import textwrap
 import time
 import types
@@ -523,6 +524,41 @@ def single_threaded_libraries():
             if v is None: os.environ.pop(k, None)
             else: os.environ[k] = v
 
+@contextlib.contextmanager
+def trial_directory(path):
+    """Folder for the output prefixes of the trial refinements; removed afterwards (also after an error), unless it
+    existed before"""
+    existed = os.path.isdir(path)
+    os.makedirs(path, exist_ok=True)
+    try:
+        yield path
+    finally:
+        if not existed:
+            shutil.rmtree(path, ignore_errors=True)
+
+def scan_plot(path, x, series, xlabel, ylabel, best=None):
+    """Plot of a scan vs the number of groups (optional: needs matplotlib). series: [(label, values, style)];
+    best: the selected number, marked with a vertical line"""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+    fig, ax = plt.subplots(figsize=(5, 3.5))
+    for label, y, style in series:
+        ax.plot(x, y, style, label=label)
+    if best:
+        ax.axvline(best, color="gray", ls="--", lw=0.8)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if len(series) > 1:
+        ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    logger.writeln(f"Plot written: {path}")
+
 def run_trials(args0, specs, ncycle, jobs, on_done=None):
     """Run trial refinements, `jobs` at a time. specs: [(key, yaml_path, prefix)], to be given with the most expensive
     first so that the processes finish at about the same time; a new trial is started whenever one has finished.
@@ -603,21 +639,8 @@ def finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_t
         index=False, float_format=lambda x: f"{x:.3f}" if abs(x) < 100 else f"{x:.1f}"))
     logger.writeln("\nB_rms vs N:")
     logger.writeln(ascii_chart(rows, "B_rms"))
-    try: # optional
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(5, 3.5))
-        ax.plot(df.N, df.B_rms, "o-")
-        ax.axvline(best, color="gray", ls="--", lw=0.8)
-        ax.set_xlabel("TLS groups per chain")
-        ax.set_ylabel("r.m.s. of B(obs) - B(TLS) (A$^2$)")
-        fig.tight_layout()
-        fig.savefig(prefix + "_scan.png", dpi=150)
-        plt.close(fig)
-        logger.writeln(f"Plot written: {prefix}_scan.png")
-    except ImportError:
-        pass
+    scan_plot(prefix + "_scan.png", df.N, [("B_rms", df.B_rms, "o-")], "TLS groups per chain",
+              "r.m.s. of B(obs) - B(TLS) (A$^2$)", best)
     logger.writeln("\n" + "=" * 70)
     groups, desc, _ = config_for_n(best)
     logger.writeln(f"Recommendation: {best} group(s) per chain. {why}")
@@ -662,9 +685,7 @@ def main(args):
     else:
         parts = partitions_for_chains(ctx, chains, args)
     prefix = args.output_prefix
-    trial_dir = prefix + "_trials" # files written by the trial refinements
-    if not data_free:
-        os.makedirs(trial_dir, exist_ok=True)
+    trial_dir = prefix + "_trials" # output prefixes of the trial refinements; removed when they have finished
     by_name = {c.name: c for c in chains}
 
     def resolve(name, k): # the division of a chain into k groups (fewer if k is not possible)
@@ -719,8 +740,9 @@ def main(args):
         if not args.no_eval:
             jobs = n_jobs(args, 2)
             logger.writeln(f"\nEvaluating by refinement (xyz fixed, {args.tls_cycles} cycles){f' on {jobs} processes' if jobs > 1 else ''}..")
-            res = run_trials(args0, [("custom", out_yaml, f"{trial_dir}/custom"), ("n0", None, f"{trial_dir}/n0")],
-                             args.tls_cycles, jobs)
+            with trial_directory(trial_dir):
+                res = run_trials(args0, [("custom", out_yaml, f"{trial_dir}/custom"), ("n0", None, f"{trial_dir}/n0")],
+                                 args.tls_cycles, jobs)
             r0, r1 = res["n0"], res["custom"]
             kw, kf = r_keys(r1)
             for lab, r in (("no TLS", r0), (f"{len(groups)} groups", r1)):
@@ -765,7 +787,8 @@ def main(args):
         lab = "N= 0 (no TLS)" if n == 0 else f"N={n:2d} ({ngroups_n[n]:2d} groups)"
         logger.writeln(f"  {lab}  {kw}= {r[kw]:.4f}" + (f"  {kf}= {r[kf]:.4f}" if kf else "") + f"  [{r['seconds']:.0f} s]")
     t_trials = time.time()
-    res = run_trials(args0, specs, args.tls_cycles, jobs, report)
+    with trial_directory(trial_dir):
+        res = run_trials(args0, specs, args.tls_cycles, jobs, report)
     wall = time.time() - t_trials
     work = sum(r["seconds"] for r in res.values())
     if jobs > 1:
@@ -802,24 +825,8 @@ def main(args):
     forplot = [["R vs groups per chain", ["N", kw] + ([kf] if kf else [])]]
     logger.writeln(utils.make_loggraph_str(df[["N", kw] + ([kf] if kf else [])], "R vs groups per chain", forplot,
                                            float_format="{:.4f}".format))
-    try: # optional
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(5, 3.5))
-        ax.plot(df.N, df[kw], "o-", label=kw)
-        if kf:
-            ax.plot(df.N, df[kf], "s-", label=kf)
-        if best > 0:
-            ax.axvline(best, color="gray", ls="--", lw=0.8)
-        ax.set_xlabel("TLS groups per chain")
-        ax.set_ylabel("R")
-        ax.legend()
-        fig.tight_layout()
-        fig.savefig(prefix + "_scan.png", dpi=150)
-        logger.writeln(f"Plot written: {prefix}_scan.png")
-    except ImportError:
-        pass
+    scan_plot(prefix + "_scan.png", df.N, [(kw, df[kw], "o-")] + ([(kf, df[kf], "s-")] if kf else []),
+              "TLS groups per chain", "R", best)
     logger.writeln("\n" + "=" * 70)
     if best == 0:
         logger.writeln(f"Recommendation: no TLS. {why}")

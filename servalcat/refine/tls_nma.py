@@ -588,7 +588,6 @@ def main(args):
 
     kw = kf = None
     if not data_free:
-        os.makedirs(prefix + "_trials", exist_ok=True)
         specs.reverse()
         specs.append((0, None, f"{prefix}_trials/n0"))
         jobs = ts.n_jobs(args, len(specs))
@@ -599,7 +598,8 @@ def main(args):
             a, b = ts.r_keys(r)
             lab = "no TLS" if n == 0 else f"{sizes_by_k[n]['groups']} domains"
             logger.writeln(f"  {lab:12s} {a}= {r[a]:.4f}" + (f"  {b}= {r[b]:.4f}" if b else "") + f"  [{r['seconds']:.0f} s]")
-        res = ts.run_trials(args0, specs, args.tls_cycles, jobs, report)
+        with ts.trial_directory(prefix + "_trials"):
+            res = ts.run_trials(args0, specs, args.tls_cycles, jobs, report)
         kw, kf = ts.r_keys(res[0])
         key_sel = kf or kw
         rows.insert(0, {"N": 0, "groups": 0, "params": 0, "sizes": "", "stretches": 0, "B_chi2": float("nan"),
@@ -633,6 +633,13 @@ def main(args):
         json.dump({"rows": rows, "selected_N": best_k, "reason": why, "enm": args.enm, "cutoff": cutoff,
                    "network": args.network, "span_chains": bool(span), "nmodes": min(len(net.w) for net in networks),
                    "groups": {str(k): parts[k][1] for k in parts}}, ofs, indent=2, default=float)
+    xlabel = "domains" if span else "domains per chain"
+    if kw:
+        ts.scan_plot(prefix + "_scan.png", df.N, [(kw, df[kw], "o-")] + ([(kf, df[kf], "s-")] if kf else []), xlabel, "R",
+                     best_k)
+    else:
+        ts.scan_plot(prefix + "_scan.png", df.N, [("B_rms", df.B_rms, "o-")], xlabel, "r.m.s. of B(obs) - B(TLS) (A$^2$)",
+                     best_k)
     logger.writeln("\n" + "=" * 70)
     logger.writeln(f"Domains from the {args.enm.upper()} normal modes vs the number of domains")
     logger.writeln("B_rms: r.m.s. of B_obs - B_TLS (A^2) when one TLS group is fitted to the B-factors of every domain")
