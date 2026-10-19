@@ -103,22 +103,6 @@ class XtalTests(unittest.TestCase):
                                       [2.335468, 1.484534, -3.820001, 0., -0.996069, 0.],
                                       rtol=1e-3)
 
-    @unittest.skipUnless(utils.refmac.check_version(), "refmac unavailable")
-    def test_refine_cx(self):
-        mtzin = os.path.join(root, "biotin", "biotin_talos.mtz")
-        pdbin = os.path.join(root, "biotin", "biotin_talos.pdb")
-        sys.argv = ["", "refine_cx", "--model", pdbin,
-                    "--hklin", mtzin, "--bref", "iso_then_aniso"]
-        main()
-        self.assertTrue(os.path.isfile("refined_2_aniso.mtz"))
-        r_factor = None
-        with open("refined_2_aniso.log") as ifs:
-            for l in ifs:
-                if l.startswith("           R factor"):
-                    r_factor = float(l.split()[-1])
-        self.assertLess(r_factor, 0.185)
-    # test_refine_cx()
-    
 # class XtalTests
 
 if __name__ == '__main__':

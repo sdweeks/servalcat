@@ -13,9 +13,8 @@ import gemmi
 import numpy
 import json
 import pandas
-import scipy.sparse
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import List, Dict, Optional
 import omegaconf
 import servalcat # for version
 from servalcat.utils import logger
@@ -23,7 +22,6 @@ from servalcat import utils
 from servalcat.refmac import exte
 from servalcat.refmac import refmac_keywords
 from servalcat import ext
-from . import cgsolve
 u_to_b = utils.model.u_to_b
 b_to_u = utils.model.b_to_u
 Type = ext.RefineParams.Type
@@ -68,6 +66,13 @@ local_geom_weights:
 local_adpr_weights:
   - sel: ..
     w: 1
+tls:
+  groups:
+    - id: 1
+      selections: [sel_1, sel_2]
+  ncycle: 1
+  enforce_psd: true
+  input_b: auto  # auto, total or residual
 vdw_exclusion:
   selections: []
   pair_selections: []
@@ -121,6 +126,22 @@ class VdwExclusion:
     selections: List[str] = field(default_factory=list)
     pair_selections: List[PairSelection] = field(default_factory=list)
 @dataclass
+class TlsGroupItem:
+    id: int
+    selections: List[str] = field(default_factory=list)
+    # optional starting values (as written by Servalcat in prefix_tls.yaml); T, L, S as in the PDB TLS records
+    origin: Optional[List[float]] = field(default=None, metadata={"help": "Origin (x, y, z) in A"})
+    T: Optional[List[float]] = field(default=None, metadata={"help": "T11 T22 T33 T12 T13 T23 in A^2"})
+    L: Optional[List[float]] = field(default=None, metadata={"help": "L11 L22 L33 L12 L13 L23 in deg^2"})
+    S: Optional[List[float]] = field(default=None, metadata={"help": "S11 S12 S13 S21 S22 S23 S31 S32 S33 in A*deg"})
+@dataclass
+class TlsConfig:
+    groups: List[TlsGroupItem] = field(default_factory=list, metadata={"help": "TLS groups; each is a list of gemmi selections"})
+    ncycle: int = field(default=1, metadata={"help": "Number of TLS refinement steps per macro cycle"})
+    input_b: str = field(default="auto", metadata={"help": "auto, total or residual: B-factors in the input model when starting values of T, L, S are given. "
+                                                       "auto: total, unless the model says residual only"})
+    enforce_psd: bool = field(default=True, metadata={"help": "Keep T and L positive semi-definite. If false, only the total U of each atom is required to be positive definite"})
+@dataclass
 class RefineConfig:
     atom_selection: Dict[str, SelectionConfig] = field(
         default_factory=lambda: {
@@ -141,6 +162,7 @@ class RefineConfig:
     geom_weights: RestraintWeights = field(default_factory=RestraintWeights)
     local_geom_weights: List[SelectionAndWeightItem] = field(default_factory=list)
     local_adpr_weights: List[SelectionAndWeightItem] = field(default_factory=list)
+    tls: TlsConfig = field(default_factory=TlsConfig)
     initialisation: Dict[str, Dict[str, float]] = field(
         default_factory=lambda: {
             "adp": {},
@@ -161,6 +183,12 @@ def load_config(yaml_file, args, refmackwds):
         except omegaconf.errors.ValidationError as e:
             raise SystemExit(f"Error while parsing {yaml_file}.\n{e.msg}")
             
+    tls_file = getattr(args, "tls_file", None)
+    if tls_file: # TLS definition written by a previous run (prefix_tls.yaml); replaces refine.tls.groups
+        try:
+            cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load(tls_file))
+        except omegaconf.errors.ValidationError as e:
+            raise SystemExit(f"Error while parsing {tls_file}.\n{e.msg}")
     # load from args
     rcfg = cfg.refine
     if getattr(args, "write_trajectory", False):
@@ -768,9 +796,10 @@ class GroupOccupancy:
 
 
 class Refine:
-    def __init__(self, st, geom, cfg, refine_params, ll=None, unrestrained=False):
+    def __init__(self, st, geom, cfg, refine_params, ll=None, unrestrained=False, tls=None):
         assert geom is not None
         self.st = st # clone()?
+        self.tls = tls # TlsModel (see tls.py)
         self.st_traj = None
         self.params = refine_params
         self.geom = geom
@@ -785,7 +814,7 @@ class Refine:
         if self.cfg.write_trajectory:
             self.st_traj = self.st.clone()
             self.st_traj[-1].num = 0
-        assert self.geom.group_occ.groups or self.params.n_params() > 0
+        assert self.geom.group_occ.groups or self.params.n_params() > 0 or self.tls is not None
     # __init__()
     
     def print_weights(self): # TODO unfinished
@@ -873,6 +902,8 @@ class Refine:
             max_occ = {atom: 1./(len(images)+1) for atom, images, _, _ in self.geom.specs}
         for a in self.params.atoms:
             a.occ = min(max_occ.get(a, 1), max(0, a.occ))
+        if self.tls is not None: # total U = U_tls + residual B (atom.b_iso)
+            self.tls.apply()
         # Copy B of hydrogen from parent
         #if self.h_inherit_parent_adp:
         #    for h in self.geom.parents:
@@ -908,66 +939,13 @@ class Refine:
 
     #@profile
     def run_cycle(self, weight=1):
-        if 0: # test of grad
-            self.ll.update_fc()
-            x0 = self.get_x()
-            f0,ader,_ = self.calc_target(weight)
-            i = 1
-            for e in 1e-1,1e-2,1e-3, 1e-4, 1e-5:
-                x1 = numpy.copy(x0)
-                x1[i] += e
-                self.set_x(x1)
-                self.ll.update_fc()
-                f1,_,_ = self.calc_target(weight, target_only=True)
-                nder = (f1 - f0) / e
-                print("e=", e)
-                print("NUM DER=", nder)
-                print("ANA DER=", ader[i])
-                print("ratio=", nder/ader[i])
-            quit()
-
         f0 = self.calc_target(weight)
         x0 = self.get_x()
         logger.writeln("f0= {:.4e}".format(f0))
-        if 0:
-            logger.writeln(f"geom_vec=\n{self.geom.geom.target.vn}")
-            logger.writeln(f"geom_mat=\n{self.geom.geom.target.am_spmat}")
-            logger.writeln(f"  ll_vec=\n{self.ll.ll.vn}")
-            logger.writeln(f"  ll_mat=\n{self.ll.ll.fisher_spmat}")
-        if 1:
-            use_ic = False # incomplete cholesky. problematic at least in geometry optimisation case
-            logger.writeln("using cgsolve in c++, ic={}".format(use_ic))
-            cgsolver = ext.CgSolve(self.geom.geom.target, None if self.ll is None else self.ll.ll)
-            if use_ic:
-                cgsolver.gamma = 0
-                cgsolver.max_gamma_cyc = 1
-            else:
-                cgsolver.gamma = self.gamma
-            dx = cgsolver.solve(weight, logger, use_ic)
-            self.gamma = cgsolver.gamma
-        else:
-            logger.writeln("using cgsolve in py")
-            am = self.geom.geom.target.am_spmat
-            vn = numpy.array(self.geom.geom.target.vn)
-            if self.ll is not None:
-                am += self.ll.ll.fisher_spmat * weight
-                vn += numpy.array(self.ll.ll.vn) * weight
-            diag = am.diagonal()
-            diag[diag<=0] = 1.
-            diag = numpy.sqrt(diag)
-            rdiag = 1./diag # sk
-            M = scipy.sparse.diags(rdiag)
-            dx, self.gamma = cgsolve.cgsolve_rm(A=am, v=vn, M=M, gamma=self.gamma)
-
-        if 0: # to check hessian scale
-            with open("minimise_line.dat", "w") as ofs:
-                ofs.write("s f\n")
-                for s in numpy.arange(-2, 2, 0.1):
-                    dx2 = self.scale_shifts(dx, s)
-                    self.set_x(x0 + dx2)
-                    fval = self.calc_target(weight, target_only=True)
-                    ofs.write("{} {}\n".format(s, fval))
-            quit()
+        cgsolver = ext.CgSolve(self.geom.geom.target, None if self.ll is None else self.ll.ll)
+        cgsolver.gamma = self.gamma
+        dx = cgsolver.solve(weight, logger, False) # False: no incomplete cholesky (problematic in geometry optimisation)
+        self.gamma = cgsolver.gamma
 
         ret = True # success
         shift_scale = 1
@@ -1017,6 +995,8 @@ class Refine:
                 stats[-1]["twin_alpha"] = llstats["twin_alpha"]
             show_binstats(llstats["bin_stats"], 0)
         if self.params.is_refined(Type.B):
+            if self.tls is not None:
+                logger.writeln("(B values of TLS atoms are residual B, without the TLS contribution)")
             utils.model.adp_analysis(self.st)
         if stats_json_out:
             write_stats_json_safe(stats, stats_json_out)
@@ -1029,10 +1009,16 @@ class Refine:
                 is_ok, shift_scale, fval = self.run_cycle(weight=weight)
                 stats.append({"Ncyc": len(stats), "shift_scale": shift_scale, "fval": fval, "fval_decreased": is_ok,
                               "weight": weight})
-            elif occ_refine_flag:
+            elif occ_refine_flag or self.tls is not None:
                 stats.append({"Ncyc": len(stats)})
             if occ_refine_flag:
                 stats[-1]["occ_refine"] = self.geom.group_occ.refine(self.ll)
+            if self.tls is not None and self.ll is not None:
+                # alternating: TLS parameters with atomic parameters fixed
+                stats[-1]["tls_step"] = self.tls.refine(self.ll)
+                stats[-1]["tls"] = self.tls.summary()
+                if i == ncycles - 1:
+                    self.tls.show()
             if debug: utils.fileio.write_model(self.st, "refined_{:02d}".format(i+1), pdb=True)#, cif=True)
             stats[-1]["geom"] = self.geom.show_model_stats(show_outliers=(i==ncycles-1))
             if self.params.occ_group_constraints:

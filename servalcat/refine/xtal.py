@@ -60,6 +60,7 @@ class LL_Xtal:
         else:
             self.is_int = is_int
         self.robust_func = robust_func
+        self.tls = None # TlsModel; set when TLS refinement is used
         logger.writeln("will use {} reflections for parameter estimation".format(self.use_in_est))
         logger.writeln("will use {} reflections for refinement".format(self.use_in_target))
 
@@ -93,8 +94,9 @@ class LL_Xtal:
             # recalc maps?
     def update_fc(self):
         # modify st before fc calculation
-        b_resid = sigmaa.subtract_common_aniso_from_model(self.st)
-        self.b_aniso += gemmi.SMat33d(*b_resid.elements_pdb()) # needed for target calculation
+        if self.tls is None: # with TLS, anisotropic U of atoms is not free to modify; see overall_scale()
+            b_resid = sigmaa.subtract_common_aniso_from_model(self.st)
+            self.b_aniso += gemmi.SMat33d(*b_resid.elements_pdb()) # needed for target calculation
         d_min = max(self.twin_data.s2_array)**(-0.5) if self.twin_data else self.d_min_max[0]
         sigmaa.update_fc(self.st, fc_labs=self.fc_labs,
                          d_min=d_min, monlib=self.monlib,
@@ -137,12 +139,17 @@ class LL_Xtal:
         self.b_aniso = self.scaling.b_aniso
         b = self.scaling.b_iso
         min_b_iso = self.st[0].calculate_b_aniso_range()[0] # actually min of aniso too
+        if self.tls is not None: # overall B is added to the residual B of TLS atoms
+            min_b_iso = min(min_b_iso, self.tls.min_residual_b())
         tmp = min_b_iso + b
         if tmp < min_b: # perhaps better only adjust b_iso that went too small, but we need to recalculate Fc
             logger.writeln(" Adjusting overall B to avoid too small value")
             b += min_b - tmp
         logger.writeln(" Applying overall B to model: {:.2f}".format(b))
-        utils.model.shift_b(self.st[0], b)
+        if self.tls is not None:
+            self.tls.shift_b(b)
+        else:
+            utils.model.shift_b(self.st[0], b)
         k_iso = self.hkldata.debye_waller_factors(b_iso=b)
         self.hkldata.df["k_aniso"] = self.hkldata.debye_waller_factors(b_cart=self.b_aniso)
         if self.use_solvent:
@@ -195,6 +202,14 @@ class LL_Xtal:
         if self.twin_data:
             estimate_twin_fractions_from_model(self.twin_data, self.hkldata)
             self._overall_scale(min_b)
+        if self.tls is not None: # the common anisotropy of T is degenerate with b_aniso; keep it in b_aniso
+            b_resid = self.tls.subtract_common_aniso()
+            if b_resid is not None:
+                self.b_aniso += b_resid
+                if self.scaling.b_aniso is not None:
+                    self.scaling.b_aniso += b_resid
+                self.hkldata.df["k_aniso"] = self.hkldata.debye_waller_factors(b_cart=self.b_aniso)
+                self.update_fc()
     # overall_scale()
 
     def calc_target(self): # -LL target for MLF or MLI
@@ -240,7 +255,7 @@ class LL_Xtal:
             logger.writeln("R1 is calculated for reflections with I/sigma>2.")
         return ret
 
-    def calc_grad(self, refine_params, specs=None):
+    def calc_grad(self, refine_params, specs=None, store=True):
         blur = utils.model.determine_blur_for_dencalc(self.st, self.d_min_max[0] / 3) # TODO need more work
         logger.writeln("blur for deriv= {:.2f}".format(blur))
         if self.twin_data:
@@ -320,29 +335,32 @@ class LL_Xtal:
         #asu = dll_dab_den.masked_asu()
         #dll_dab_den.array[:] *= 1 - asu.mask_array # 0 to use
         
-        self.ll = ext.LL(self.st, refine_params, self.mott_bethe, self.addends)
-        self.ll.set_ncs([x.tr for x in self.st.ncs if not x.given])
+        ll = ext.LL(self.st, refine_params, self.mott_bethe, self.addends)
+        ll.set_ncs([x.tr for x in self.st.ncs if not x.given])
         if self.source == "custom":
-            self.ll.calc_grad_custom(dll_dab_den, blur)
+            ll.calc_grad_custom(dll_dab_den, blur)
         elif self.source == "neutron":
-            self.ll.calc_grad_n92(dll_dab_den, blur)
+            ll.calc_grad_n92(dll_dab_den, blur)
         else:
-            self.ll.calc_grad_it92(dll_dab_den, blur)
+            ll.calc_grad_it92(dll_dab_den, blur)
 
         # second derivative
         s_array = numpy.sqrt(self.twin_data.s2_array) if self.twin_data else 1./self.hkldata.d_spacings().to_numpy()
         if self.source == "custom":
-            self.ll.make_fisher_table_diag_direct_custom(s_array, d2ll_dab2)
-            self.ll.fisher_diag_from_table_custom()
+            ll.make_fisher_table_diag_direct_custom(s_array, d2ll_dab2)
+            ll.fisher_diag_from_table_custom()
         elif self.source == "neutron":
-            self.ll.make_fisher_table_diag_direct_n92(s_array, d2ll_dab2)
-            self.ll.fisher_diag_from_table_n92()
+            ll.make_fisher_table_diag_direct_n92(s_array, d2ll_dab2)
+            ll.fisher_diag_from_table_n92()
         else:
-            self.ll.make_fisher_table_diag_direct_it92(s_array, d2ll_dab2)
-            self.ll.fisher_diag_from_table_it92()
-        #json.dump(dict(b=self.ll.table_bs, pp1=self.ll.pp1, bb=self.ll.bb),
+            ll.make_fisher_table_diag_direct_it92(s_array, d2ll_dab2)
+            ll.fisher_diag_from_table_it92()
+        #json.dump(dict(b=ll.table_bs, pp1=ll.pp1, bb=ll.bb),
         #          open("ll_fisher.json", "w"), indent=True)
         #a, (b,c) = ll.fisher_for_coo()
         #json.dump(([float(x) for x in a], ([int(x) for x in b], [int(x) for x in c])), open("fisher.json", "w"))
         if specs is not None:
-            self.ll.spec_correction(specs)
+            ll.spec_correction(specs)
+        if store:
+            self.ll = ll
+        return ll

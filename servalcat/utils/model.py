@@ -13,6 +13,7 @@ import scipy.sparse
 import os
 import time
 import itertools
+import re
 import string
 from servalcat import ext
 
@@ -43,7 +44,10 @@ def shake_structure(st, sigma, copy=True):
     return st2
 # shake_structure()
 
-def setup_entities(st, clear=False, overwrite_entity_type=False, force_subchain_names=False, fix_sequences=None):
+def setup_entities(st, clear=False, overwrite_entity_type=False, force_subchain_names=False, fix_sequences=None,
+                   sequences=None, min_seq_identity=0.8):
+    """If sequences ([(name, one-letter sequence), ...]) is given, the best matching sequence is assigned to each
+    polymer entity (see assign_sequences()) and the report from analyse_sequences() is returned."""
     if clear:
         st.entities.clear()
         st.add_entity_ids(overwrite=True) # clear entity_id so that ensure_entities() will work properly
@@ -53,8 +57,12 @@ def setup_entities(st, clear=False, overwrite_entity_type=False, force_subchain_
     st.add_entity_ids()
     st.deduplicate_entities()
 
+    report = None
+    if sequences:
+        report = assign_sequences(st, sequences, min_seq_identity)
+
     # TODO Add an option to set user-given sequences (use assign_best_sequences)
-    if fix_sequences:
+    if fix_sequences or sequences:
         for e in st.entities:
             if not e.full_sequence and e.entity_type == gemmi.EntityType.Polymer and e.subchains:
                 rspan = st[0].get_subchain(e.subchains[0])
@@ -65,7 +73,253 @@ def setup_entities(st, clear=False, overwrite_entity_type=False, force_subchain_
             for res in chain:
                 res.label_seq = None
         st.assign_label_seq_id()
+    if report is not None:
+        set_labels(st, report)
+        analyse_sequences(st, report)
+    return report
 # setup_entities()
+
+# ---- assignment of user-given sequences to polymer entities
+_KINDS = {gemmi.PolymerType.PeptideL: gemmi.ResidueKind.AA,
+          gemmi.PolymerType.PeptideD: gemmi.ResidueKind.AA,
+          gemmi.PolymerType.Dna: gemmi.ResidueKind.DNA,
+          gemmi.PolymerType.Rna: gemmi.ResidueKind.RNA}
+_TYPE_NAMES = {gemmi.PolymerType.PeptideL: "protein", gemmi.PolymerType.PeptideD: "D-protein",
+               gemmi.PolymerType.Dna: "DNA", gemmi.PolymerType.Rna: "RNA"}
+# (match, mismatch, gap open, gap extend, gap open at a chain break, gap open inside a connected stretch)
+# For choosing the sequence ("servalcat util seq" scoring): mismatches are free, the number of identical residues decides.
+_SCORING_SELECT = (1, 0, -1, -1, 0, -1)
+# For numbering the residues: a substitution stays in place (cheap), but skipping sequence between bonded residues
+# is expensive, so only a clear register shift is explained as a gap. gemmi's own numbering (assign_label_seq_id)
+# is not used because it leaves residues between two mismatches without a number.
+_SCORING_LABEL = (2, -1, -4, -1, 0, -4)
+
+def _scoring(values):
+    sc = gemmi.AlignmentScoring()
+    sc.match, sc.mismatch, sc.gapo, sc.gape, sc.good_gapo, sc.bad_gapo = values
+    return sc
+
+def read_sequence_records(files):
+    """Read FASTA files. Returns [(name, sequence)], name being the first word of the header."""
+    from servalcat.utils import fileio
+    ret = []
+    for f in files:
+        for i, (head, seq) in enumerate(fileio.read_sequence_file(f)):
+            if not seq: continue
+            name = head.split()[0] if head.split() else "{}#{}".format(os.path.basename(f), i + 1)
+            ret.append((name, seq))
+    return ret
+
+def _one_letter(resname):
+    info = gemmi.find_tabulated_residue(resname)
+    return info.one_letter_code.upper() if info and info.one_letter_code != " " else "X"
+
+def _is_unknown(resname):
+    return resname in ("UNK", "N", "DN") # e.g. poly-UNK built into the map
+
+def residues_equivalent(model_name, seq_name):
+    """True if same residue; modified residues (e.g. MSE for MET) count as the residue they replace."""
+    if model_name == seq_name: return True
+    one = _one_letter(model_name)
+    return one != "X" and one == _one_letter(seq_name)
+
+def _expand(seq, kind):
+    seq = seq.upper()
+    if kind == gemmi.ResidueKind.DNA and "U" in seq: return None # U is RNA
+    if kind == gemmi.ResidueKind.RNA and "T" in seq: return None # T is DNA
+    x = [gemmi.expand_one_letter(c, kind) for c in seq]
+    return None if None in x else x
+
+def _labels_from_cigar(cigar, n_model):
+    """label (1-based sequence position) for each modelled residue, None where the residue is not in the sequence"""
+    labels, pos = [], 1
+    for n, op in re.findall(r"(\d+)([MID])", cigar):
+        n = int(n)
+        if op == "I": pos += n                              # sequence positions that are not modelled
+        elif op == "D": labels.extend([None] * n)           # modelled residues that have no sequence position
+        else:
+            labels.extend(range(pos, pos + n)); pos += n
+    assert len(labels) == n_model, (cigar, n_model)
+    return labels
+
+def _first_conformer(span):
+    return list(span.first_conformer())
+
+def assign_sequences(st, records, min_identity=0.8):
+    """Set Entity.full_sequence of polymer entities from records [(name, one-letter sequence), ...].
+
+    Every polymer entity is aligned to each record that is valid for its polymer type (a sequence with U is not DNA,
+    with T is not RNA) and the record with most identical residues is taken. It is used only if the identity (fraction
+    of modelled residues that agree with the sequence, modified residues such as MSE counted as agreeing) is at least
+    min_identity; otherwise full_sequence stays empty. Returns a report; call set_labels() after gemmi's
+    assign_label_seq_id() (so that these labels win) and then analyse_sequences().
+    """
+    sc_sel, sc_lab = _scoring(_SCORING_SELECT), _scoring(_SCORING_LABEL)
+    c2n = {s.subchain_id(): ch.name for ch in st[0] for s in ch.subchains()}
+    report = dict(min_identity=min_identity, entries=[])
+    for e in st.entities:
+        if e.entity_type != gemmi.EntityType.Polymer or not e.subchains: continue
+        entry = dict(entity=e.name, subchains=list(e.subchains), chains=[c2n.get(x, x) for x in e.subchains],
+                     type=_TYPE_NAMES.get(e.polymer_type, str(e.polymer_type).replace("PolymerType.", "")),
+                     name=None, best=None, identity=None, ties=[], labels=None)
+        report["entries"].append(entry)
+        kind = _KINDS.get(e.polymer_type)
+        if kind is None: continue
+        polymer = st[0].get_subchain(e.subchains[0])
+        conf = _first_conformer(polymer)
+        entry["n_model"] = len(conf)
+        cands = []
+        for name, seq in records:
+            x = _expand(seq, kind)
+            if x is None: continue
+            al = gemmi.align_sequence_to_polymer(x, polymer, e.polymer_type, sc_sel)
+            cands.append(((al.match_count, al.score), name, x))
+        if not cands: continue
+        cands.sort(key=lambda c: c[0], reverse=True)
+        _, name, x = cands[0]
+        entry["best"] = name
+        entry["ties"] = [c[1] for c in cands[1:] if c[0] == cands[0][0] and c[2] != x]
+        al = gemmi.align_sequence_to_polymer(x, polymer, e.polymer_type, sc_lab)
+        labels = _labels_from_cigar(al.cigar_str(), len(conf))
+        n_ok = sum(1 for r, l in zip(conf, labels) # unknown residues do not count against the sequence
+                   if l and (_is_unknown(r.name) or residues_equivalent(r.name, x[l - 1])))
+        entry["identity"] = n_ok / max(1, len(conf))
+        if entry["identity"] >= min_identity:
+            entry["name"] = name
+            entry["labels"] = {str(r.seqid): l for r, l in zip(conf, labels)}
+            e.full_sequence = x
+    return report
+
+def set_labels(st, report):
+    """Residue.label_seq from our own alignment for the entities that got a sequence"""
+    for entry in report["entries"]:
+        if not entry["name"]: continue
+        for sub in entry["subchains"]:
+            for r in st[0].get_subchain(sub):
+                r.label_seq = entry["labels"].get(str(r.seqid))
+
+def _bonded(r1, r2, ptype):
+    key = "P" if ptype in (gemmi.PolymerType.Dna, gemmi.PolymerType.Rna) else "CA"
+    a1, a2 = r1.find_atom(key, "*"), r2.find_atom(key, "*")
+    if not a1 or not a2: return False
+    return a1.pos.dist(a2.pos) < (7.5 if key == "P" else 5.0)
+
+def _ranges(nums):
+    out = []
+    for i in nums:
+        if out and out[-1][1] == i - 1: out[-1][1] = i
+        else: out.append([i, i])
+    return out
+
+def analyse_sequences(st, report, window=8, min_window_mismatch=4):
+    """Complete the report (labels must be set): per-chain residue mismatches, unknown residues, unmodelled sequence
+    ranges, sequence skipped between bonded residues, modelled residues without a sequence position, and windows
+    that agree with the sequence better after a shift (register error)."""
+    for entry in report["entries"]:
+        entry.update(mismatches=[], unknown=[], unmodelled=[], skipped=[], extra=[], shifts=[], n_residues=0, n_seq=0)
+        if not entry["name"]: continue
+        e = st.get_entity(entry["entity"])
+        seq = list(e.full_sequence)
+        entry["n_seq"] = len(seq)
+        for k, (sub, chname) in enumerate(zip(entry["subchains"], entry["chains"])):
+            polymer = st[0].get_subchain(sub)
+            conf = _first_conformer(polymer)
+            labels = [r.label_seq for r in conf]
+            if k == 0:
+                entry["n_residues"] = len(conf)
+                entry["unmodelled"] = _ranges([i for i in range(1, len(seq) + 1) if i not in set(labels)])
+            flags = []   # 0 agree, 1 mismatch, 2 unknown residue in the model, 3 no sequence position
+            for r, l in zip(conf, labels):
+                if not l:
+                    flags.append(3)
+                elif _is_unknown(r.name):
+                    flags.append(2); entry["unknown"].append((chname, str(r.seqid), r.name, seq[l - 1]))
+                elif residues_equivalent(r.name, seq[l - 1]):
+                    flags.append(0)
+                else:
+                    flags.append(1); entry["mismatches"].append((chname, str(r.seqid), r.name, seq[l - 1]))
+            # modelled residues that have no counterpart in the sequence
+            run = []
+            for r, f in zip(conf, flags + [0]):
+                if f == 3: run.append(r)
+                elif run:
+                    entry["extra"].append((chname, str(run[0].seqid), str(run[-1].seqid), len(run))); run = []
+            # sequence skipped although the two residues are bonded
+            for j in range(len(conf) - 1):
+                l1, l2 = labels[j], labels[j + 1]
+                if l1 and l2 and l2 - l1 > 1 and _bonded(conf[j], conf[j + 1], e.polymer_type):
+                    entry["skipped"].append((chname, str(conf[j].seqid), str(conf[j + 1].seqid), l2 - l1 - 1))
+            # register shift: a window of consecutive residues that mostly disagree but agree after a shift
+            i = 0
+            while i + window <= len(conf):
+                idx = range(i, i + window)
+                contiguous = all(labels[j] and labels[j + 1] and labels[j + 1] - labels[j] == 1 for j in range(i, i + window - 1))
+                if contiguous and sum(1 for j in idx if flags[j] == 1) >= min_window_mismatch:
+                    best = None
+                    for d in (-4, -3, -2, -1, 1, 2, 3, 4):
+                        ok = sum(1 for j in idx if 1 <= labels[j] + d <= len(seq)
+                                 and residues_equivalent(conf[j].name, seq[labels[j] + d - 1]))
+                        if best is None or ok > best[1]: best = (d, ok)
+                    ok0 = sum(1 for j in idx if flags[j] == 0)
+                    if best[1] >= window - 2 and best[1] >= ok0 + 3:
+                        entry["shifts"].append((chname, str(conf[i].seqid), str(conf[i + window - 1].seqid),
+                                                best[0], best[1], ok0, window))
+                        i += window; continue
+                i += 1
+    return report
+
+def log_sequence_report(report, logger, files=None):
+    entries = report["entries"]
+    if not entries: return
+    logger.writeln("\nSequence assignment{} (minimum identity {:.0f}%)".format(
+        " from " + ", ".join(files) if files else "", 100 * report["min_identity"]))
+    logger.writeln(" {:<10} {:<8} {:<16} {:>6} {:>8} {:>8} {:>10}".format(
+        "chain(s)", "type", "sequence", "length", "modelled", "identity", "mismatches"))
+    warn = []
+    for x in entries:
+        chains = ",".join(x["chains"])
+        if len(chains) > 10: chains = chains[:8] + ".."
+        if x["name"]:
+            nmm = sum(1 for m in x["mismatches"] if m[0] == x["chains"][0])
+            logger.writeln(" {:<10} {:<8} {:<16} {:>6} {:>8} {:>7.1f}% {:>10}".format(
+                chains, x["type"], x["name"][:16], x["n_seq"], x["n_residues"], 100 * x["identity"], nmm))
+            if x["unmodelled"]:
+                logger.writeln("    sequence positions not modelled (chain {}): {}".format(
+                    x["chains"][0], ", ".join(str(a) if a == b else "{}-{}".format(a, b) for a, b in x["unmodelled"])))
+            if x["ties"]:
+                warn.append("chain {}: sequence '{}' was chosen, but {} fit(s) equally well".format(
+                    chains, x["name"], ", ".join("'{}'".format(t) for t in x["ties"])))
+        else:
+            logger.writeln(" {:<10} {:<8} {:<16} {:>6} {:>8} {:>8} {:>10}".format(
+                chains, x["type"], "-- none --", "-", x.get("n_model", "-"), "-", "-"))
+            if x.get("best") is not None and x["identity"] is not None:
+                what = "closest is '{}' at {:.1f}% identity".format(x["best"], 100 * x["identity"])
+            else:
+                what = "no sequence of the right type"
+            warn.append("chain {}: no sequence assigned ({}); the modelled sequence is used for SEQRES and label_seq_id".format(chains, what))
+    mm = [(x, m) for x in entries for m in x.get("mismatches", [])]
+    if mm:
+        logger.writeln("\nResidues that differ from the assigned sequence ({}); mutations, or residues built/typed wrongly:".format(len(mm)))
+        for x, (ch, num, rn, sn) in mm[:50]:
+            logger.writeln("   {}/{:<6} model {:<4} sequence {:<4} ({})".format(ch, num, rn, sn, x["name"]))
+        if len(mm) > 50:
+            logger.writeln("   ... and {} more".format(len(mm) - 50))
+    unk = sum(len(x.get("unknown", [])) for x in entries)
+    if unk:
+        logger.writeln("\n{} unknown (UNK) residues in the model have a position in the sequence (not counted as mismatches)".format(unk))
+    for x in entries:
+        for ch, a, b, n in x.get("skipped", []):
+            warn.append("chain {}: {} sequence position(s) are skipped between residues {} and {} although they are bonded "
+                        "(deletion or register error?)".format(ch, n, a, b))
+        for ch, a, b, n in x.get("extra", []):
+            warn.append("chain {}: {} residue(s) {}{} have no counterpart in the sequence (insertion or register error?)".format(
+                ch, n, a, "" if a == b else "-" + b))
+        for ch, a, b, d, ok, ok0, w in x.get("shifts", []):
+            warn.append("chain {} residues {}-{}: the sequence agrees better after a shift of {:+d} ({}/{} identical vs {}/{} as numbered); "
+                        "possible register error".format(ch, a, b, d, ok, w, ok0, w))
+    for w in warn:
+        logger.writeln("WARNING: " + w)
+    logger.writeln("")
 
 def determine_blur_for_dencalc(st, grid):
     b_min = min(m.calculate_b_aniso_range()[0] for m in st)
