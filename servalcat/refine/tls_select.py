@@ -38,6 +38,7 @@ from servalcat.utils import logger
 from servalcat import utils
 from servalcat.refine import refine_xtal
 from servalcat.refine import tls as tls_mod
+from servalcat.refine import tls_report
 
 u_to_b = utils.model.u_to_b
 
@@ -613,8 +614,19 @@ def ascii_chart(rows, key, width=40):
         lines.append(f" {r['N']:3d} {r[key]:.4f} " + "#" * n)
     return "\n".join(lines)
 
+def report_facts(args, method, t_start):
+    facts = [("Model", args.model), ("Reflection data", args.hklin or "none (fit to the B-factors only)")]
+    if method == "bfactor":
+        facts.append(("Partitions", f"TLS fitted to the B-factors ({args.atoms} atoms)"))
+    else:
+        facts.append(("Partitions", "maximum likelihood (dynamic programming over contiguous segments)"))
+    if not getattr(args, "no_eval", False):
+        facts.append(("Trial refinements", f"{args.tls_cycles} cycles, coordinates fixed, residual B and TLS refined"))
+    facts.append(("Time", f"{time.time() - t_start:.0f} s"))
+    return facts
+
 def finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_total, t_start, config_for_n, show_ranges,
-                        write_pdb):
+                        write_pdb, items_for_n, st):
     """Table, graph and recommendation of the B-factor fit alone (no refinement)"""
     rows = []
     for n, _ in configs:
@@ -652,6 +664,11 @@ def finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_t
     logger.writeln(f"\nTLS definition written: {prefix}_tls.yaml\n  use it with: refine_xtal --tls_file {prefix}_tls.yaml\n"
                    f"  (other numbers of groups: {prefix}_tls_N*.yaml; the number can be forced with --ngroups)\n"
                    f"Group of every residue: {prefix}_domains_N*.csv; model with the group number as B-factor: {prefix}_domains.pdb")
+    tls_report.write_report(prefix + "_report.html", "tls_bfit", st,
+                            [(n, f"N = {n}", items_for_n(n)) for n, _ in configs], best,
+                            why + "\nA fit to B-factors always improves with more groups; give --hklin to compare R-free.",
+                            rows=rows, groups=groups, facts=report_facts(args, "bfactor", t_start),
+                            files=tls_report.output_files(prefix))
     logger.writeln(f"Table: {prefix}_scan.csv, {prefix}_scan.json    total time {time.time() - t_start:.0f} s")
 
 def main(args):
@@ -747,6 +764,12 @@ def main(args):
             kw, kf = r_keys(r1)
             for lab, r in (("no TLS", r0), (f"{len(groups)} groups", r1)):
                 logger.writeln(f" {lab:12s} " + "  ".join(f"{k}= {r[k]:.4f}" for k in (kw, kf) if k) + f"  -LL= {r['-LL']:.1f}")
+            rows = [{"N": 0, "groups": 0, "params": 0, **r0},
+                    {"N": "--ngroups", "groups": len(groups), "params": tls_mod.NPAR * len(groups), **r1}]
+        label = "--ngroups " + " ".join(args.ngroups)
+        tls_report.write_report(prefix + "_report.html", "tls_bfit" if method == "bfactor" else "tls_select", st,
+                                [(None, label, items)], None, f"groups set by {label}", rows=rows, groups=groups,
+                                facts=report_facts(args, method, t_start), files=tls_report.output_files(prefix))
         return
     # scan
     kmax_chain = {name: max(p) for name, p in parts.items()}
@@ -763,18 +786,19 @@ def main(args):
     else:
         logger.writeln(f"\nScanning 0 .. {configs[-1][0]} groups per chain; each evaluated by {args.tls_cycles} cycles of refinement "
                        "(xyz fixed, residual B + TLS)")
-    descs, preds, ngroups_n, specs = {}, {}, {}, []
+    descs, preds, ngroups_n, specs, items_n = {}, {}, {}, [], {}
     for n, counts in configs:
         groups, desc, pred = config_for(counts)
         yaml_n = f"{prefix}_tls_N{n}.yaml"
         write_yaml(yaml_n, groups)
-        write_domain_csv(f"{prefix}_domains_N{n}.csv", items_for(counts))
+        items_n[n] = items_for(counts)
+        write_domain_csv(f"{prefix}_domains_N{n}.csv", items_n[n])
         descs[n], preds[n], ngroups_n[n] = desc, pred, len(groups)
         specs.append((n, yaml_n, f"{trial_dir}/n{n}"))
     if method == "bfactor" and args.no_eval:
         finish_bfactor_scan(args, prefix, configs, preds, ngroups_n, descs, natoms_total, t_start,
                             lambda n: config_for(dict(configs)[n]), show_ranges,
-                            lambda n: write_domains_pdb(prefix + "_domains.pdb", st, items_for(dict(configs)[n])))
+                            lambda n: write_domains_pdb(prefix + "_domains.pdb", st, items_n[n]), items_n.get, st)
         return
     specs.reverse()                                   # most groups (most expensive) first
     specs.append((0, None, f"{trial_dir}/n0"))        # cheapest last
@@ -839,5 +863,9 @@ def main(args):
         logger.writeln(f"\nTLS definition written: {prefix}_tls.yaml\n  use it with: refine_xtal --tls_file {prefix}_tls.yaml\n"
                        f"  (other numbers of groups: {prefix}_tls_N*.yaml; the number can be forced with --ngroups)\n"
                        f"Group of every residue: {prefix}_domains_N*.csv; model with the group number as B-factor: {prefix}_domains.pdb")
+    tls_report.write_report(prefix + "_report.html", "tls_bfit" if method == "bfactor" else "tls_select", st,
+                            [(n, f"N = {n}", items_n[n]) for n, _ in configs], best, why, rows=rows, kw=kw, kf=kf,
+                            groups=config_for({c: min(best, kmax_chain[c]) for c in kmax_chain})[0] if best else None,
+                            facts=report_facts(args, method, t_start), files=tls_report.output_files(prefix))
     logger.writeln(f"Table: {prefix}_scan.csv, {prefix}_scan.json    total time {time.time() - t_start:.0f} s")
 # main()

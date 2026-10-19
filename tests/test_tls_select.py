@@ -206,6 +206,12 @@ class TestTlsSelect(unittest.TestCase):
             self.assertTrue(os.path.isfile(fn), fn)
         self.assertEqual(len(self.read_ranges("scan_tls.yaml")), 2)
         self.assertFalse(os.path.exists("scan_trials")) # removed after the trial refinements
+        page = open("scan_report.html").read()                # HTML report: groups of every N and the scan
+        self.assertEqual(page.count('class="selrow"'), 1)
+        self.assertIn("Recommendation: 2 groups per chain (2 TLS groups)", page)
+        self.assertIn("R-values of the trial refinements", page)
+        self.assertEqual(page.count('class="box"'), 1 + 2 + 3)
+        self.assertLess(page.index('href="scan_tls.yaml"'), page.index('href="scan_tls_N1.yaml"'))
         if HAVE_MPL:
             self.assertTrue(os.path.isfile("scan_scan.png"))
         for n in (1, 2, 3):
@@ -230,6 +236,9 @@ class TestTlsSelect(unittest.TestCase):
         self.assertEqual(len(self.read_ranges("ngev_tls.yaml")), 2)
         self.assertRegex(open("ngev.log").read(), r"2 groups\s+Rwork=")
         self.assertFalse(os.path.exists("ngev_trials"))
+        page = open("ngev_report.html").read()
+        self.assertIn("groups set by --ngroups 2", page)
+        self.assertEqual(page.count('class="box"'), 2)
 
     def test_failing_trial_is_reported(self):
         args = argparse.ArgumentParser()
@@ -316,6 +325,10 @@ class TestBFitMethod(unittest.TestCase):
         self.assertEqual(set(dom[dom.resi.astype(int) >= self.boundary].domain), {2})
         self.assertTrue(os.path.isfile(p + "_domains.pdb"))
         self.assertFalse(os.path.exists(p + "_trials"))                # no refinement, no trial directory
+        page = open(p + "_report.html").read()
+        self.assertIn("TLS groups from tls_bfit", page)
+        self.assertIn("Fit of TLS to the B-factors", page)
+        self.assertNotIn("R-values of the trial refinements", page)
         log = open(p + ".log").read()
         self.assertIn("no refinement", log)
         self.assertIn("rule of thumb", log)

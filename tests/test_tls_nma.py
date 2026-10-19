@@ -209,6 +209,10 @@ class TestCommand(unittest.TestCase):
             if HAVE_MPL:
                 self.assertTrue(os.path.isfile(p + "_scan.png")) # B_rms vs N (no reflection data)
             self.assertFalse(os.path.exists(p + "_trials"))
+            page = open(p + "_report.html").read()
+            self.assertIn("TLS groups from tls_nma", page)
+            self.assertEqual(page.count('class="selrow"'), 1)
+            self.assertIn("N (domains per chain)", page)
 
     def test_domains_pdb_and_ngroups(self):
         self.run_cmd(["--ngroups", "2"], "ng")
@@ -251,6 +255,9 @@ class TestWithReflections(unittest.TestCase):
                 self.assertIn(k, df.columns)
             self.assertGreater(df.Rfree[0] - df.Rfree[1], 0.005)    # TLS helps
             self.assertFalse(os.path.exists("ev_trials"))           # removed after the trial refinements
+            page = open("ev_report.html").read()
+            self.assertIn("R-values of the trial refinements", page)
+            self.assertIn("Fit of TLS to the B-factors", page)
             if HAVE_MPL:
                 self.assertTrue(os.path.isfile("ev_scan.png"))      # R vs N
         finally:

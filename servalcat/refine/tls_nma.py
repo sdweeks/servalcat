@@ -42,6 +42,7 @@ from servalcat.utils import logger
 from servalcat import utils
 from servalcat.refine import refine_xtal
 from servalcat.refine import tls as tls_mod
+from servalcat.refine import tls_report
 from servalcat.refine import tls_select as ts
 
 ENM_CUTOFF = {"anm": 15.0, "gnm": 10.0}
@@ -657,4 +658,15 @@ def main(args):
         logger.writeln(f"\nTLS definition written: {prefix}_tls.yaml\n  use it with: refine_xtal --tls_file {prefix}_tls.yaml\n"
                        f"Model with the domain number as B-factor: {prefix}_domains.pdb  (colour by B to inspect the domains)\n"
                        f"Domain of every residue: {prefix}_domains_N*.csv; other numbers of domains: {prefix}_tls_N*.yaml")
+    facts = [("Model", args.model), ("Reflection data", args.hklin or "none (fit to the B-factors only)"),
+             ("Elastic network", f"{args.enm.upper()}, cutoff {cutoff:g} A, {args.network} network"
+                                 f"{', domains may span chains' if span else ''}"),
+             ("Normal modes", str(min(len(net.w) for net in networks)))]
+    if not data_free:
+        facts.append(("Trial refinements", f"{args.tls_cycles} cycles, coordinates fixed, residual B and TLS refined"))
+    facts.append(("Time", f"{time.time() - t_start:.0f} s"))
+    scans = [(k, f"N = {k}", [(nd.chain, nd.residue, int(l) + 1) for nd, l in zip(nodes, parts[k][0])]) for k in ks]
+    tls_report.write_report(prefix + "_report.html", "tls_nma", st, scans, best_k, why, rows=rows, kw=kw, kf=kf,
+                            groups=parts[best_k][1] if best_k else None, unit=xlabel, facts=facts,
+                            files=tls_report.output_files(prefix))
     logger.writeln(f"Table: {prefix}_scan.csv, {prefix}_scan.json    total time {time.time() - t_start:.0f} s")
