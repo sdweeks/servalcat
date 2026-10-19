@@ -94,7 +94,7 @@ class LL_Xtal:
             # recalc maps?
     def update_fc(self):
         # modify st before fc calculation
-        if self.tls is None: # with TLS, anisotropic U of atoms is not free to modify; overall b_aniso is from scaling
+        if self.tls is None: # with TLS, anisotropic U of atoms is not free to modify; see overall_scale()
             b_resid = sigmaa.subtract_common_aniso_from_model(self.st)
             self.b_aniso += gemmi.SMat33d(*b_resid.elements_pdb()) # needed for target calculation
         d_min = max(self.twin_data.s2_array)**(-0.5) if self.twin_data else self.d_min_max[0]
@@ -202,6 +202,14 @@ class LL_Xtal:
         if self.twin_data:
             estimate_twin_fractions_from_model(self.twin_data, self.hkldata)
             self._overall_scale(min_b)
+        if self.tls is not None: # the common anisotropy of T is degenerate with b_aniso; keep it in b_aniso
+            b_resid = self.tls.subtract_common_aniso()
+            if b_resid is not None:
+                self.b_aniso += b_resid
+                if self.scaling.b_aniso is not None:
+                    self.scaling.b_aniso += b_resid
+                self.hkldata.df["k_aniso"] = self.hkldata.debye_waller_factors(b_cart=self.b_aniso)
+                self.update_fc()
     # overall_scale()
 
     def calc_target(self): # -LL target for MLF or MLI

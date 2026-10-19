@@ -39,6 +39,8 @@ and a Levenberg-Marquardt step with a line search on -LL is taken. T and L are k
 semi-definite (enforce_psd, default) by projecting every trial on the cone, and the total U of every atom
 must stay positive definite. With enforce_psd=False only the total U is constrained, as in Phenix; on
 test data this let T and L become unphysical (negative T) and R-free drifted up.
+After every overall scaling the anisotropic part common to all T contributions is moved to the overall
+anisotropic scale (subtract_common_aniso), with which it is degenerate.
 """
 from __future__ import absolute_import, division, print_function, generators
 import re
@@ -272,6 +274,53 @@ class TlsModel:
         for a, b in saved:
             a.b_iso = max(b + delta_b, min_b)
         self.apply()
+
+    def subtract_common_aniso(self):
+        """Move the anisotropic part common to all TLS contributions from the T tensors to the overall anisotropic
+        scale, as sigmaa.subtract_common_aniso_from_model() does for atoms without TLS. The two are degenerate; without
+        this the T tensors and B_aniso drift against each other in long runs until T hits the PSD bound and -LL
+        rises. T' = T - alpha*uc + lam*I with the smallest lam >= 0 that keeps T' positive semi-definite, and the
+        residual B of the group lowered by lam*8pi^2, so the total U of every TLS atom changes by exactly -alpha*uc.
+        alpha < 1 only if the residual B would go below min_b or the total U of an atom below its floor (atoms already
+        below it, which apply() lifts, are not checked). Returns the B to be added to B_aniso, or None."""
+        u = numpy.concatenate([g.u_tls() for g in self.groups])
+        u[:, :3] -= u[:, :3].sum(axis=1, keepdims=True) / 3. # traceless: the isotropic part is handled by shift_b
+        adpdirs = utils.model.adp_constraints(self.st.find_spacegroup().operations(), self.st.cell, tr0=True)
+        uc = adpdirs.dot(u.mean(axis=0)).dot(adpdirs)
+        if not numpy.any(numpy.abs(uc) > 1e-8):
+            return None
+        p_old = [g.p.copy() for g in self.groups]
+        b_old = [numpy.array([a.b_iso for a in g.atoms]) for g in self.groups]
+        floor = self.min_b * b_to_u
+        valid0 = [self._min_eig(g) >= floor - 1e-9 for g in self.groups] # atoms already below are lifted by apply()
+        lams = []
+        def trial(alpha):
+            lams.clear()
+            good = True
+            for g, p0, b0 in zip(self.groups, p_old, b_old):
+                T = sym33(p0[0:6] - alpha * uc)
+                lam = max(0., -numpy.linalg.eigvalsh(T).min()) if self.enforce_psd else 0.
+                g.p = p0.copy()
+                g.p[0:6] = sym6(T + lam * numpy.eye(3))
+                for a, b in zip(g.atoms, b0):
+                    a.b_iso = b - lam * u_to_b
+                lams.append(lam)
+                if lam > 0 and b0.min() - lam * u_to_b < self.min_b:
+                    good = False
+            return good and all(numpy.all(self._min_eig(g)[v] >= floor - 1e-9) for g, v in zip(self.groups, valid0))
+        alpha = 1.
+        if not trial(alpha): # largest shift that keeps the residual B above min_b and every valid total U above the floor
+            lo, hi = 0., 1.
+            for _ in range(20):
+                mid = (lo + hi) / 2
+                lo, hi = (mid, hi) if trial(mid) else (lo, mid)
+            alpha = lo
+            trial(alpha)
+        self.apply()
+        b_aniso = gemmi.SMat33d(*(alpha * uc * u_to_b))
+        logger.writeln(f" TLS: common anisotropic component moved to overall B_aniso: B= {b_aniso}"
+                       f" (fraction {alpha:.3f}; max isotropic shift from residual B to T {max(lams) * u_to_b:.2f})")
+        return b_aniso
 
     def finalize(self):
         """Make atom.b_iso the isotropic equivalent of the total U (for output)"""

@@ -216,6 +216,52 @@ class TestTlsRefine(unittest.TestCase):
             numpy.testing.assert_allclose(g2.p, g.p, rtol=1e-12)
             numpy.testing.assert_allclose(g2.origin, g.origin, rtol=1e-12)
 
+    def _two_group_model(self):
+        st = utils.fileio.read_structure(os.path.join(root, "1l2h", "1l2h.cif.gz"))
+        for i, cra in enumerate(st[0].all()):
+            cra.atom.serial = i + 1
+            cra.atom.b_iso = 30.
+        class Item:
+            def __init__(self, i, sels): self.id, self.selections = i, sels
+        groups = tls.groups_from_selections(st, [Item(1, ["//A/4-80/*"]), Item(2, ["//A/81-164/*"])])
+        groups[0].p[0:6] = [0.3, 0.3, 0., 0., 0., 0.]
+        groups[1].p[0:6] = [0.02, 0.02, 0.6, 0., 0., 0.]
+        return groups, tls.TlsModel(st, groups)
+
+    def test_subtract_common_aniso(self):
+        # the anisotropy common to all TLS contributions is moved out of T (to the overall B_aniso): the total U
+        # of every TLS atom changes by the same tensor, T stays positive semi-definite (group 1 needs an isotropic
+        # shift from its residual B for that) and no common part is left
+        groups, model = self._two_group_model()
+        u0 = numpy.array([a.aniso.elements_pdb() for a in model.atoms])
+        b = model.subtract_common_aniso()
+        self.assertIsNotNone(b)
+        u1 = numpy.array([a.aniso.elements_pdb() for a in model.atoms])
+        du = numpy.array(b.elements_pdb()) * utils.model.b_to_u
+        self.assertGreater(du[2], 0.05) # elongation along z (allowed in P43)
+        numpy.testing.assert_allclose(u0 - u1, numpy.tile(du, (len(u0), 1)), atol=1e-6)
+        for g in groups:
+            self.assertGreaterEqual(numpy.linalg.eigvalsh(g.tensors()[0]).min(), -1e-9)
+        self.assertLess(max(a.b_iso for a in groups[0].atoms), 30. - 1.)
+        self.assertTrue(all(a.b_iso == 30. for a in groups[1].atoms))
+        self.assertIsNone(model.subtract_common_aniso()) # nothing common is left
+
+    def test_subtract_common_aniso_with_invalid_atom(self):
+        # an atom whose TLS + residual U is already below the floor (lifted by apply()) or whose residual B is below
+        # min_b must not block the transfer for all the others
+        groups, model = self._two_group_model()
+        bad = groups[1].atoms[0]
+        bad.b_iso = -2.
+        model.apply()
+        self.assertFalse(model.is_valid())
+        u0 = numpy.array([a.aniso.elements_pdb() for a in model.atoms])
+        b = model.subtract_common_aniso()
+        u1 = numpy.array([a.aniso.elements_pdb() for a in model.atoms])
+        du = numpy.array(b.elements_pdb()) * utils.model.b_to_u
+        self.assertGreater(du[2], 0.05) # the full common part, as without the invalid atom
+        keep = numpy.array([a is not bad for a in model.atoms])
+        numpy.testing.assert_allclose((u0 - u1)[keep], numpy.tile(du, (keep.sum(), 1)), atol=1e-6)
+
     def test_restart_after_tls_records_are_lost(self):
         # An editing program (Coot) may drop REMARK 3 / the TLS categories. The yaml written with the
         # refined model (--tls_file) continues the TLS refinement from the previous solution.
