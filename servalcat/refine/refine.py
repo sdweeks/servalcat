@@ -20,7 +20,7 @@ import omegaconf
 import servalcat # for version
 from servalcat.utils import logger
 from servalcat import utils
-from servalcat.refmac import exte
+from servalcat.refine import exte
 from servalcat.refmac import refmac_keywords
 from servalcat import ext
 from . import cgsolve
