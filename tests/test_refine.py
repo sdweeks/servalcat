@@ -303,6 +303,14 @@ exte angl firs chai A resi 6 atom O next chai A resi 1 atom MG next chai A resi 
                                         "z": [-13.512]})
         assert_frame_equal(geo["outliers"]["torsion"], expected_df, atol=0.001)
 
+        # test inte
+        geo = get_geom([["exte inte firs chai A resi 2 ins . atom O seco chai A resi 4 ins . atom N dmax 2.9 smax 0.001 dmin 2 smin 0.001",
+                         "exte inte firs chai A resi 2 ins . atom O seco chai A resi 4 ins . atom N dmax 3.9 smax 0.001 dmin 3 smin 0.001"]])
+        expected_df = pandas.DataFrame({"atom1": ["A/VAL 2/O"]*2, "atom2": ["A/SER 4/N"]*2,
+                                        "value": [4.621]*2, "ideal": [2.9, 3.9], "sigma": [0.001]*2,
+                                        "z": [1720.616, 720.617],})
+        assert_frame_equal(geo["outliers"]["interval"], expected_df, atol=0.001)
+
     def test_centroid(self):
         xyzin = os.path.join(root, "1e8a", "1e8a.cif.gz")
         with open("exte.json", "w") as ofs:
