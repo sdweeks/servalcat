@@ -162,8 +162,9 @@ def refine_and_update_dictionary(cif_in, monomer_dir, output_prefix, refine_cfg,
 def refine_geom(model_in, monomer_dir, cif_files, h_change, ncycle, output_prefix, randomize, refmackwds,
                 refine_cfg, find_links=False, use_ncsr=False):
     st = utils.fileio.read_structure(model_in)
+    autoseq = [] # no input sequence: no SEQRES / _entity_poly_seq in the output
     utils.model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
-                               fix_sequences=True)
+                               fix_sequences=True, autoseq=autoseq)
     if not all(op.given for op in st.ncs):
         st2 = st.clone()
         logger.writeln("Take NCS constraints into account.")
@@ -198,9 +199,9 @@ def refine_geom(model_in, monomer_dir, cif_files, h_change, ncycle, output_prefi
                                stats_json_out=output_prefix + "_stats.json")
     update_meta(st, stats[-1])
     refiner.st.name = output_prefix
-    utils.fileio.write_model(refiner.st, output_prefix, pdb=True, cif=True)
+    utils.fileio.write_model(refiner.st, output_prefix, pdb=True, cif=True, drop_seq=autoseq)
     if refine_cfg.write_trajectory:
-        utils.fileio.write_model(refiner.st_traj, output_prefix + "_traj", cif=True)
+        utils.fileio.write_model(refiner.st_traj, output_prefix + "_traj", cif=True, drop_seq=autoseq)
 # refine_geom()
 
 def set_prefix(args):

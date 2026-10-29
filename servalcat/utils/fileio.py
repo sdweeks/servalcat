@@ -143,7 +143,20 @@ def write_pdb(st, pdb_out):
     st.write_pdb(pdb_out, use_linkr=True)
 # write_pdb()
 
-def write_model(st, prefix=None, file_name=None, pdb=False, cif=False, cif_ref=None, hout=True):
+def drop_sequences(st, entity_names):
+    """Copy of st in which the named entities have no full_sequence: no SEQRES in a PDB file and no
+    _entity_poly_seq in an mmCIF file. The residues keep their label_seq_id."""
+    st = st.clone()
+    names = set(entity_names)
+    for e in st.entities:
+        if e.name in names:
+            e.full_sequence = []
+    return st
+
+def write_model(st, prefix=None, file_name=None, pdb=False, cif=False, cif_ref=None, hout=True, drop_seq=()):
+    """drop_seq: names of the entities whose sequence is not written (see drop_sequences())"""
+    if drop_seq:
+        st = drop_sequences(st, drop_seq)
     if not hout and st[0].has_hydrogen():
         st = st.clone()
         st.remove_hydrogens()

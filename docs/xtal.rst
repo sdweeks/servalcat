@@ -169,7 +169,7 @@ Notes: the residue ranges are written as gemmi selections (``//A/4-80/*``), so a
 Sequence assignment and mismatch feedback
 -----------------------------------------
 
-By default SEQRES and ``label_seq_id`` are generated from the modelled residues only. With ``--seq`` (FASTA file(s) with protein, DNA and/or RNA sequences) the best matching sequence is assigned to every polymer chain, so that unmodelled residues, tags and gaps are represented in SEQRES and the mmCIF numbering. A sequence is accepted if at least ``--seq_min_identity`` (default 0.8) of the modelled residues agree with it; sequences with ``U`` are not used for DNA and sequences with ``T`` are not used for RNA.
+Without a sequence, no ``SEQRES`` (PDB) or ``_entity_poly_seq`` (mmCIF) is written, because the only sequence available would be the modelled residues; ``label_seq_id`` is numbered along the modelled residues. (``--keep_entities`` keeps the SEQRES of the input.) With ``--seq`` (FASTA file(s) with protein, DNA and/or RNA sequences) the best matching sequence is assigned to every polymer chain, so that unmodelled residues, tags and gaps are represented in SEQRES and the mmCIF numbering. A sequence is accepted if at least ``--seq_min_identity`` (default 0.8) of the modelled residues agree with it; sequences with ``U`` are not used for DNA and sequences with ``T`` are not used for RNA.
 
 The log lists the assignment and every residue that differs from the sequence (chain/number, model residue, sequence residue). Modified residues such as MSE count as the residue they replace and unknown (UNK) residues are not counted. A stretch built out of register is reported as a warning: sequence skipped between bonded residues, modelled residues without a counterpart in the sequence, or a stretch that fits the sequence after a shift.
 
@@ -373,8 +373,9 @@ The options are listed in groups: required arguments; optional arguments with de
     Sequence annotation (off unless given):
       --seq [FASTA ...]               Sequence file(s) in FASTA format: the best-matching sequence is
                                       assigned to each protein, DNA and RNA chain for SEQRES and
-                                      label_seq_id, and residues that differ from it are reported
-                                      (default: none)
+                                      label_seq_id, and residues that differ from it are reported.
+                                      Without it, no SEQRES / _entity_poly_seq is written
+                                      (label_seq_id follows the modelled residues) (default: none)
 
     Additional inputs (off unless given):
       --ligand [CIF ...]              Restraint dictionary file(s) for ligands that are not in the
@@ -396,8 +397,8 @@ The options are listed in groups: required arguments; optional arguments with de
                                       (default: off)
       --prefer_anomalous              When choosing the columns automatically, prefer Friedel pairs
                                       (default: off)
-      --keep_entities                 Keep the entity and SEQRES information of the input (default:
-                                      off)
+      --keep_entities                 Keep the entity and SEQRES information of the input
+                                      (otherwise SEQRES is dropped unless --seq is given) (default: off)
       --keep_charges                  Use scattering factors of charged atoms (use with care)
                                       (default: off)
       --allow_unusual_occupancies     Allow negative occupancies or occupancies above 1 (default: off)
@@ -514,8 +515,9 @@ The options are listed in groups: required arguments; optional arguments with de
     Sequence annotation (off unless given):
       --seq [FASTA ...]               Sequence file(s) in FASTA format: the best-matching sequence is
                                       assigned to each protein, DNA and RNA chain for SEQRES and
-                                      label_seq_id, and residues that differ from it are reported
-                                      (default: none)
+                                      label_seq_id, and residues that differ from it are reported.
+                                      Without it, no SEQRES / _entity_poly_seq is written
+                                      (label_seq_id follows the modelled residues) (default: none)
 
     Additional inputs (off unless given):
       --ligand [CIF ...]              Restraint dictionary file(s) for ligands that are not in the
@@ -537,8 +539,8 @@ The options are listed in groups: required arguments; optional arguments with de
                                       (default: off)
       --prefer_anomalous              When choosing the columns automatically, prefer Friedel pairs
                                       (default: off)
-      --keep_entities                 Keep the entity and SEQRES information of the input (default:
-                                      off)
+      --keep_entities                 Keep the entity and SEQRES information of the input
+                                      (otherwise SEQRES is dropped unless --seq is given) (default: off)
       --keep_charges                  Use scattering factors of charged atoms (use with care)
                                       (default: off)
       --allow_unusual_occupancies     Allow negative occupancies or occupancies above 1 (default: off)

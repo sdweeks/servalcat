@@ -75,7 +75,7 @@ electron diffraction — and extends it with TLS.
 * **TLS groups from normal modes** — `servalcat util tls_nma` finds domains that move together with an anisotropic or a
   Gaussian elastic network model and writes them as TLS groups, also when a domain is internal or made of several
   stretches or chains ([below](#tls-groups-from-normal-modes-servalcat-util-tls_nma)).
-* **Smaller code base** — no cryo-EM code; a test suite (107 tests) covering the
+* **Smaller code base** — no cryo-EM code; a test suite (116 tests) covering the
   refinement options, TLS, the selection utility, sequence assignment and MTZ column selection.
 
 **Removed compared with upstream**: cryo-EM single-particle programs (`refine_spa`, `refine_spa_norefmac`,
@@ -190,7 +190,7 @@ its help line. The tables below are grouped by topic instead. Defaults are in pa
 | `--vonmises` | experimental von Mises angle restraints |
 | `--seq FASTA [FASTA ...]` | sequence file(s); the best-matching sequence is assigned to each protein, DNA and RNA chain (see [Sequence assignment](#sequence-assignment-and-mismatch-feedback)) |
 | `--seq_min_identity X` | minimum fraction of modelled residues that must agree with a sequence for it to be assigned (default 0.8) |
-| `--keep_entities` | do not regenerate entity and sequence information (SEQRES of the input is kept) |
+| `--keep_entities` | do not regenerate entity and sequence information (SEQRES of the input is kept; without it SEQRES is dropped unless `--seq` is given) |
 | `--keep_charges` | use scattering factors of charged atoms (use with care) |
 
 ### Refinement control
@@ -283,8 +283,10 @@ refine:
 
 ### Sequence assignment and mismatch feedback
 
-By default the SEQRES records and `label_seq_id` of the output are generated from the **modelled** residues, so unmodelled
-termini, tags and gaps are not represented. With `--seq construct.fa` the full construct sequence is used instead:
+Without a sequence, **no SEQRES records (PDB) or `_entity_poly_seq` (mmCIF) are written**: the only sequence available would be
+the modelled residues, which is not the sequence of the construct. `label_seq_id` is numbered along the modelled residues, so
+unmodelled termini, tags and gaps are not represented. With `--seq construct.fa` the full construct sequence is used and
+SEQRES is written (for chains where no sequence is accepted, SEQRES is left out):
 
 ```
 servalcat refine_xtal --model model.pdb --hklin data.mtz -s xray --seq construct.fa ... 

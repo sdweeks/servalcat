@@ -45,9 +45,12 @@ def shake_structure(st, sigma, copy=True):
 # shake_structure()
 
 def setup_entities(st, clear=False, overwrite_entity_type=False, force_subchain_names=False, fix_sequences=None,
-                   sequences=None, min_seq_identity=0.8):
+                   sequences=None, min_seq_identity=0.8, autoseq=None):
     """If sequences ([(name, one-letter sequence), ...]) is given, the best matching sequence is assigned to each
-    polymer entity (see assign_sequences()) and the report from analyse_sequences() is returned."""
+    polymer entity (see assign_sequences()) and the report from analyse_sequences() is returned.
+    The modelled sequence is used internally (label_seq_id) for the entities that have no sequence; their names are
+    appended to the list autoseq if given, so that write_model(..., drop_seq=autoseq) can leave them out of
+    the output (no SEQRES / _entity_poly_seq for a sequence nobody supplied)."""
     if clear:
         st.entities.clear()
         st.add_entity_ids(overwrite=True) # clear entity_id so that ensure_entities() will work properly
@@ -60,6 +63,10 @@ def setup_entities(st, clear=False, overwrite_entity_type=False, force_subchain_
     report = None
     if sequences:
         report = assign_sequences(st, sequences, min_seq_identity)
+        st.deduplicate_entities() # chains with the same sequence but different unmodelled residues are one entity
+        ent_of = {sub: e.name for e in st.entities for sub in e.subchains}
+        for entry in report["entries"]:
+            entry["entity"] = ent_of.get(entry["subchains"][0], entry["entity"])
 
     # TODO Add an option to set user-given sequences (use assign_best_sequences)
     if fix_sequences or sequences:
@@ -67,6 +74,8 @@ def setup_entities(st, clear=False, overwrite_entity_type=False, force_subchain_
             if not e.full_sequence and e.entity_type == gemmi.EntityType.Polymer and e.subchains:
                 rspan = st[0].get_subchain(e.subchains[0])
                 e.full_sequence = [r.name for r in rspan]
+                if autoseq is not None:
+                    autoseq.append(e.name)
 
         # fix label_seq_id
         for chain in st[0]:
@@ -296,7 +305,7 @@ def log_sequence_report(report, logger, files=None):
                 what = "closest is '{}' at {:.1f}% identity".format(x["best"], 100 * x["identity"])
             else:
                 what = "no sequence of the right type"
-            warn.append("chain {}: no sequence assigned ({}); the modelled sequence is used for SEQRES and label_seq_id".format(chains, what))
+            warn.append("chain {}: no sequence assigned ({}); the modelled sequence is used for label_seq_id only; no SEQRES is written for it".format(chains, what))
     mm = [(x, m) for x in entries for m in x.get("mismatches", [])]
     if mm:
         logger.writeln("\nResidues that differ from the assigned sequence ({}); mutations, or residues built/typed wrongly:".format(len(mm)))

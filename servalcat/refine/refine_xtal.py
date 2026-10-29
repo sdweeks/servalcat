@@ -144,7 +144,8 @@ def add_arguments(parser, after_required=None, hklin_required=True):
     g = parser.add_argument_group("Sequence annotation (off unless given)")
     _add(g, "--seq", nargs="*", action="append", metavar="FASTA", show="none",
          help="Sequence file(s) in FASTA format: the best-matching sequence is assigned to each protein, DNA and RNA "
-         "chain for SEQRES and label_seq_id, and residues that differ from it are reported")
+         "chain for SEQRES and label_seq_id, and residues that differ from it are reported. Without it, no SEQRES / "
+         "_entity_poly_seq is written (label_seq_id follows the modelled residues)")
 
     g = parser.add_argument_group("Additional inputs (off unless given)")
     if not hklin_required:
@@ -166,7 +167,7 @@ def add_arguments(parser, after_required=None, hklin_required=True):
     g = parser.add_argument_group("Advanced options (off unless given)")
     _add(g, "--prefer_intensity", action="store_true", help="When choosing the columns automatically, prefer intensities")
     _add(g, "--prefer_anomalous", action="store_true", help="When choosing the columns automatically, prefer Friedel pairs")
-    _add(g, "--keep_entities", action="store_true", help="Keep the entity and SEQRES information of the input")
+    _add(g, "--keep_entities", action="store_true", help="Keep the entity and SEQRES information of the input (otherwise SEQRES is dropped unless --seq is given)")
     _add(g, "--keep_charges", action="store_true", help="Use scattering factors of charged atoms (use with care)")
     _add(g, "--allow_unusual_occupancies", action="store_true", help="Allow negative occupancies or occupancies above 1")
     _add(g, "--newligand_continue", action="store_true",
@@ -270,6 +271,7 @@ def setup(args, use_tls=True):
     seq_files = sum(args.seq, []) if args.seq else []
     seq_records = None
     seq_report = None
+    autoseq = [] # entities without an input sequence: no SEQRES / _entity_poly_seq in the output
     if seq_files:
         try:
             seq_records = utils.model.read_sequence_records(seq_files)
@@ -295,7 +297,7 @@ def setup(args, use_tls=True):
         if seq_records and not args.keep_entities:
             seq_report = utils.model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
                                                     fix_sequences=True, sequences=seq_records,
-                                                    min_seq_identity=args.seq_min_identity)
+                                                    min_seq_identity=args.seq_min_identity, autoseq=autoseq)
             utils.model.log_sequence_report(seq_report, logger, seq_files)
     else:
         try:
@@ -307,7 +309,7 @@ def setup(args, use_tls=True):
         if not args.keep_entities:
             seq_report = utils.model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
                                                     fix_sequences=True, sequences=seq_records,
-                                                    min_seq_identity=args.seq_min_identity)
+                                                    min_seq_identity=args.seq_min_identity, autoseq=autoseq)
         elif seq_records:
             seq_report = utils.model.assign_sequences(st, seq_records, args.seq_min_identity)
             for chain in st[0]:
@@ -436,7 +438,7 @@ def setup(args, use_tls=True):
     return types.SimpleNamespace(refiner=refiner, refine_cfg=refine_cfg, software_items=software_items,
                                  ll=ll, st=st, hkldata=hkldata, is_int=is_int, tls=tls, geom=geom,
                                  refine_params=refine_params, monlib=monlib, use_in_target=use_in_target,
-                                 seq_report=seq_report, occ_result=occ_result)
+                                 seq_report=seq_report, occ_result=occ_result, autoseq=autoseq)
 # setup()
 
 def main(args):
@@ -444,6 +446,7 @@ def main(args):
     ctx = setup(args)
     refiner, refine_cfg, software_items = ctx.refiner, ctx.refine_cfg, ctx.software_items
     ll, st, hkldata, is_int, tls = ctx.ll, ctx.st, ctx.hkldata, ctx.is_int, ctx.tls
+    autoseq = ctx.autoseq
     stats = refiner.run_cycles(args.ncycle, weight=args.weight,
                                weight_adjust=not args.no_weight_adjust,
                                weight_adjust_bond_rmsz_range=args.target_bond_rmsz_range,
@@ -456,13 +459,14 @@ def main(args):
         tls_mod.write_tls_config(args.output_prefix + "_tls.yaml", st, tls)
     st.meta.software = software_items + st.meta.software
     refiner.st.name = args.output_prefix
-    utils.fileio.write_model(refiner.st, args.output_prefix, pdb=True, cif=True, hout=args.hout)
+    utils.fileio.write_model(refiner.st, args.output_prefix, pdb=True, cif=True, hout=args.hout, drop_seq=autoseq)
     if st.has_d_fraction: # XXX make hout when neutron
         st_hd_expand = refiner.st.clone()
         st_hd_expand.store_deuterium_as_fraction(False)
-        utils.fileio.write_model(st_hd_expand, args.output_prefix + "_hd_expand", pdb=True, cif=True, hout=True)
+        utils.fileio.write_model(st_hd_expand, args.output_prefix + "_hd_expand", pdb=True, cif=True, hout=True,
+                                    drop_seq=autoseq)
     if refine_cfg.write_trajectory:
-        utils.fileio.write_model(refiner.st_traj, args.output_prefix + "_traj", cif=True)
+        utils.fileio.write_model(refiner.st_traj, args.output_prefix + "_traj", cif=True, drop_seq=autoseq)
 
     # Write mtz file
     if ll.twin_data:

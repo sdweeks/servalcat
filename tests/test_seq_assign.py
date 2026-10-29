@@ -141,6 +141,66 @@ class TestAssignment(unittest.TestCase):
         finally:
             shutil.rmtree(wd)
 
+class TestMultiSequenceFasta(unittest.TestCase):
+    """Four protein chains, A and B with the same sequence (B has other residues unmodelled), C and D different, and a
+    FASTA file with these three sequences and a decoy"""
+    def setUp(self):
+        self.wd = tempfile.mkdtemp(prefix="servaltest_")
+        os.chdir(self.wd)
+        self.X, self.Y, self.Z = msd.random_protein(30, 11), msd.random_protein(24, 12), msd.random_protein(18, 13)
+        self.chains = [msd.chain("A", self.X, "AA", [1, 2]), msd.chain("B", self.X, "AA", [29, 30]),
+                       msd.chain("C", self.Y, "AA", [10]), msd.chain("D", self.Z, "AA")]
+        self.records = [("seqX", self.X), ("seqY", self.Y), ("seqZ", self.Z), ("decoy", msd.random_protein(28, 14))]
+
+    def tearDown(self):
+        os.chdir(root)
+        shutil.rmtree(self.wd)
+
+    def seqres(self, path):
+        out = {}
+        for l in open(path):
+            if l.startswith("SEQRES"):
+                out.setdefault(l[11], []).extend(l[19:].split())
+        return {k: gemmi.one_letter_code(v) for k, v in out.items()}
+
+    def test_every_chain_gets_its_own_sequence(self):
+        st = msd.build(self.chains)
+        autoseq = []
+        rep = model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
+                                   fix_sequences=True, sequences=self.records, autoseq=autoseq)
+        self.assertEqual(autoseq, [])
+        names = {ch: entry(rep, ch)["name"] for ch in "ABCD"}
+        self.assertEqual(names, dict(A="seqX", B="seqX", C="seqY", D="seqZ"))
+        for ch in "ABCD":
+            self.assertAlmostEqual(entry(rep, ch)["identity"], 1.0)
+            self.assertTrue(labels_correct(st, ch), ch)
+        self.assertEqual(entry(rep, "A")["unmodelled"], [[1, 2]])
+        self.assertEqual(entry(rep, "B")["unmodelled"], [[29, 30]])
+        from servalcat.utils import fileio
+        fileio.write_model(st, "mc", pdb=True, cif=True, drop_seq=autoseq)
+        self.assertEqual(self.seqres("mc.pdb"), dict(A=self.X, B=self.X, C=self.Y, D=self.Z))
+        cif = gemmi.cif.read("mc.mmcif").sole_block()
+        eps = cif.find("_entity_poly_seq.", ["entity_id", "num", "mon_id"])
+        by_entity = {}
+        for row in eps:
+            by_entity.setdefault(row[0], []).append(row[2])
+        self.assertEqual(sorted(len(v) for v in by_entity.values()), [18, 24, 30])
+        self.assertEqual(sorted(gemmi.one_letter_code(v) for v in by_entity.values()),
+                         sorted([self.X, self.Y, self.Z]))
+
+    def test_chain_without_a_sequence_has_no_seqres(self):
+        st = msd.build(self.chains)
+        autoseq = []
+        rep = model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
+                                   fix_sequences=True, sequences=[r for r in self.records if r[0] != "seqY"],
+                                   autoseq=autoseq)
+        self.assertIsNone(entry(rep, "C")["name"])
+        self.assertEqual(len(autoseq), 1)
+        from servalcat.utils import fileio
+        fileio.write_model(st, "mc", pdb=True, cif=True, drop_seq=autoseq)
+        self.assertEqual(self.seqres("mc.pdb"), dict(A=self.X, B=self.X, D=self.Z)) # nothing for chain C
+        self.assertTrue(all(r.label_seq for r in st[0]["C"])) # still numbered, along the modelled residues
+
 class TestRefineWithSeq(unittest.TestCase):
     def setUp(self):
         self.wd = tempfile.mkdtemp(prefix="servaltest_")
@@ -187,6 +247,38 @@ class TestRefineWithSeq(unittest.TestCase):
         cif = gemmi.read_structure("sq.mmcif")
         r4 = [r for r in cif[0]["A"] if r.seqid.num == 4][0]
         self.assertEqual(r4.label_seq, 4 + 3) # numbering follows the construct
+
+    def run_plain(self, prefix, *extra):
+        sys.argv = ["", "refine_xtal", "--model", "start.pdb", "--hklin", "data.mtz", "-s", "xray",
+                    "--labin", "FP,SIGFP,FreeR_flag", "--no_solvent", "--hydrogen", "no", "--ncycle", "1",
+                    "-o", prefix] + list(extra)
+        main()
+
+    def test_no_seqres_without_a_sequence(self):
+        # no input sequence: the output has neither SEQRES nor _entity_poly_seq, but still label_seq_id
+        self.run_plain("ns")
+        lines = open("ns.pdb").read().splitlines()
+        self.assertFalse(any(l.startswith("SEQRES") for l in lines))
+        self.assertIn("_entity_poly.entity_id", open("ns.mmcif").read())
+        self.assertNotIn("_entity_poly_seq", open("ns.mmcif").read())
+        cif = gemmi.read_structure("ns.mmcif")
+        self.assertEqual([r.label_seq for r in cif[0]["A"]][:3], [1, 2, 3])
+
+    def test_keep_entities_keeps_the_seqres_of_the_input(self):
+        self.run_plain("ke", "--keep_entities")
+        lines = open("ke.pdb").read().splitlines()
+        self.assertTrue(any(l.startswith("SEQRES") for l in lines))
+        self.assertIn("_entity_poly_seq", open("ke.mmcif").read())
+
+    def test_seqres_with_a_sequence(self):
+        st = gemmi.read_structure("start.pdb")
+        st.setup_entities()
+        full = gemmi.one_letter_code(st.entities[0].full_sequence)
+        with open("c.fa", "w") as f:
+            f.write(">c\n" + full + "\n")
+        self.run_plain("ws", "--seq", "c.fa")
+        self.assertTrue(any(l.startswith("SEQRES") for l in open("ws.pdb").read().splitlines()))
+        self.assertIn("_entity_poly_seq", open("ws.mmcif").read())
 
 if __name__ == '__main__':
     unittest.main()
