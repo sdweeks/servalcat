@@ -75,7 +75,7 @@ electron diffraction — and extends it with TLS.
 * **TLS groups from normal modes** — `servalcat util tls_nma` finds domains that move together with an anisotropic or a
   Gaussian elastic network model and writes them as TLS groups, also when a domain is internal or made of several
   stretches or chains ([below](#tls-groups-from-normal-modes-servalcat-util-tls_nma)).
-* **Smaller code base** — no cryo-EM code; a test suite (116 tests) covering the
+* **Smaller code base** — no cryo-EM code; a test suite (117 tests) covering the
   refinement options, TLS, the selection utility, sequence assignment and MTZ column selection.
 
 **Removed compared with upstream**: cryo-EM single-particle programs (`refine_spa`, `refine_spa_norefmac`,

@@ -156,6 +156,29 @@ class TestMultiSequenceFasta(unittest.TestCase):
         os.chdir(root)
         shutil.rmtree(self.wd)
 
+    def check_entity_ids(self, st):
+        # the entity of every residue exists (chains merged into one entity must not keep the id of the removed one)
+        for ch in st[0]:
+            for r in ch:
+                self.assertIsNotNone(st.get_entity(r.entity_id), (ch.name, r.seqid.num, r.entity_id))
+        self.assertEqual({r.entity_id for r in st[0]["A"]}, {r.entity_id for r in st[0]["B"]})
+
+    def test_homodimer_with_different_modelled_ranges(self):
+        # regression: A and B get the same sequence and are merged into one entity; chain B kept the removed entity's id,
+        # so that st.get_entity(residue.entity_id) was None (crash in find_and_fix_links)
+        X = msd.random_protein(40, 21)
+        st = msd.build([msd.chain("A", X, "AA"), msd.chain("B", X, "AA", [1, 2, 3, 4, 5, 6, 7])])
+        rep = model.setup_entities(st, clear=True, force_subchain_names=True, overwrite_entity_type=True,
+                                   fix_sequences=True, sequences=[("X", X)])
+        self.assertEqual([(entry(rep, c)["name"], entry(rep, c)["entity"]) for c in "AB"], [("X", "A"), ("X", "A")])
+        self.assertEqual(len([e for e in st.entities if e.entity_type == gemmi.EntityType.Polymer]), 1)
+        self.check_entity_ids(st)
+        from servalcat.utils import fileio
+        fileio.write_model(st, "hd", pdb=True, cif=True)
+        self.assertEqual(self.seqres("hd.pdb"), dict(A=X, B=X))
+        ids = set(gemmi.cif.read("hd.mmcif").sole_block().find_values("_atom_site.label_entity_id"))
+        self.assertEqual(len(ids), 1)
+
     def seqres(self, path):
         out = {}
         for l in open(path):
@@ -176,6 +199,7 @@ class TestMultiSequenceFasta(unittest.TestCase):
             self.assertTrue(labels_correct(st, ch), ch)
         self.assertEqual(entry(rep, "A")["unmodelled"], [[1, 2]])
         self.assertEqual(entry(rep, "B")["unmodelled"], [[29, 30]])
+        self.check_entity_ids(st)
         from servalcat.utils import fileio
         fileio.write_model(st, "mc", pdb=True, cif=True, drop_seq=autoseq)
         self.assertEqual(self.seqres("mc.pdb"), dict(A=self.X, B=self.X, C=self.Y, D=self.Z))

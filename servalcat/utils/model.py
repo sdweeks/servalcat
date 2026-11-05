@@ -64,6 +64,7 @@ def setup_entities(st, clear=False, overwrite_entity_type=False, force_subchain_
     if sequences:
         report = assign_sequences(st, sequences, min_seq_identity)
         st.deduplicate_entities() # chains with the same sequence but different unmodelled residues are one entity
+        st.add_entity_ids(overwrite=True) # residues of a merged-away entity still carry its id
         ent_of = {sub: e.name for e in st.entities for sub in e.subchains}
         for entry in report["entries"]:
             entry["entity"] = ent_of.get(entry["subchains"][0], entry["entity"])
