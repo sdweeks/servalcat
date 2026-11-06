@@ -408,6 +408,7 @@ class CustomCoefUtil:
 
 def check_atomsf(st, source, mott_bethe=True, wavelength=None):
     assert source in ("xray", "electron", "neutron")
+    if wavelength is not None and numpy.isnan(wavelength): wavelength = None
     if source != "electron": mott_bethe = False
     if wavelength is not None: assert source == "xray"
     logger.writeln("Atomic scattering factors for {}".format("xray (use Mott-Bethe to convert to electrons)" if mott_bethe else source))

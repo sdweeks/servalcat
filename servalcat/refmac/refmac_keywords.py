@@ -178,7 +178,7 @@ def read_exte(s, raise_unknown=True):
                     ret["restr"]["symm"] = s[itk+1][0].lower() == "y"
                     itk += 2
                 else:
-                    d = dict(valu="value", dmin="dmin", dmax="dmax", smin="smin_value", smax="smax_value",
+                    d = dict(valu="value", dmin="dmin", dmax="dmax", smin="smin", smax="smax",
                              sigm="sigma", alph="alpha", prob="prob_in")
                     k = s[itk][:4].lower()
                     if k in d:

@@ -2,7 +2,7 @@
 
 > **This repository is a fork of [Servalcat](https://github.com/keitaroyam/servalcat)**
 > by Keitaro Yamashita and Garib N. Murshudov (upstream: <https://github.com/keitaroyam/servalcat>,
-> documentation: <https://servalcat.readthedocs.io>). It is based on upstream version 0.4.150 and is not
+> documentation: <https://servalcat.readthedocs.io>). It is based on upstream version 0.4.153 and is not
 > affiliated with or endorsed by the upstream authors.
 >
 > `pip install servalcat` and `conda install servalcat` install the **upstream** package, which does *not*
