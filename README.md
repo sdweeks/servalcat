@@ -648,15 +648,15 @@ This fork is installed from source (a compiled C++ extension is built, with GEMM
 ### Install
 
 ```shell
-git clone --recurse-submodules --branch claude/relaxed-ramanujan-e4ko9y https://github.com/sdweeks/servalcat.git
+git clone --recurse-submodules --branch servalcatX https://github.com/sdweeks/servalcat.git
 cd servalcat
 pip uninstall servalcat    # only if upstream Servalcat is installed (same package name)
 pip install .
 ```
 
-`--branch claude/relaxed-ramanujan-e4ko9y` selects the branch that contains the features described above; the `main`
+`--branch servalcatX` selects the branch that contains the features described above; the `main`
 branch of this repository is still identical to upstream. (Once the branch has been merged into `main`, leave the
-option out.) If you already cloned the repository: `git fetch origin && git checkout claude/relaxed-ramanujan-e4ko9y`
+option out.) If you already cloned the repository: `git fetch origin && git checkout servalcatX`
 and `git submodule update --init`.
 
 `--recurse-submodules` fetches Eigen into `eigen/` (from <https://gitlab.com/libeigen/eigen.git>). If you cloned
