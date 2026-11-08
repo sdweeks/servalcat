@@ -83,7 +83,10 @@ class TestNetworkModels(unittest.TestCase):
             self.assertLess(numpy.abs(wd - ws).max(), 1e-9, enm)
 
     def test_eigenvalues_agree_with_prody(self):
-        prody = __import__("pytest").importorskip("prody")
+        try:
+            import prody
+        except ImportError:
+            self.skipTest("ProDy is not installed (pip install \".[test]\")")
         prody.confProDy(verbosity="none")
         nodes, pos = lysozyme_nodes()
         for enm, cls, cut in (("anm", prody.ANM, 15.0), ("gnm", prody.GNM, 10.0)):
