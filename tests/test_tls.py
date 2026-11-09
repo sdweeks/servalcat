@@ -10,6 +10,7 @@ import unittest
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import numpy
@@ -20,6 +21,15 @@ from servalcat.refine import tls
 from servalcat.__main__ import main
 
 root = os.path.abspath(os.path.dirname(__file__))
+
+def run_servalcat(args, cwd):
+    """Run `servalcat args...` in a separate process (so that a failing command cannot disturb the
+    objects of other tests in this process); returns the CompletedProcess with stdout and stderr together."""
+    code = "import sys, servalcat; from servalcat.__main__ import main; sys.argv = ['servalcat'] + sys.argv[1:]; main()"
+    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(servalcat.__file__)))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(filter(None, [pkg_parent, os.environ.get("PYTHONPATH")])))
+    return subprocess.run([sys.executable, "-c", code] + list(args), cwd=cwd, env=env, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
 
 class TestTlsMath(unittest.TestCase):
     def setUp(self):
@@ -324,16 +334,23 @@ class TestTlsRefine(unittest.TestCase):
             shutil.rmtree(wd)
 
     def test_tls_errors(self):
+        # Bad TLS options must stop with an error message (exit status 1), not with a crash. Each command runs in
+        # its own process: two failing main() calls in one process have crashed nanobind's instance registry
+        # ("unexpected collision") depending on what the earlier tests left in memory.
         hklin = os.path.join(root, "biotin", "biotin_talos.mtz")
         xyzin = os.path.join(root, "biotin", "biotin_talos.pdb")
-        base = ["", "refine_xtal", "--model", xyzin, "--hklin", hklin, "-s", "xray", "--unrestrained",
+        base = ["refine_xtal", "--model", xyzin, "--hklin", hklin, "-s", "xray", "--unrestrained",
                 "--hydrogen", "no", "--ncycle", "1"]
-        sys.argv = base + ["--tls"] # no groups defined anywhere
-        with self.assertRaises(SystemExit):
-            main()
-        sys.argv = base + ["--tls_per_chain", "--adp", "aniso"] # residual B must be isotropic
-        with self.assertRaises(SystemExit):
-            main()
+        wd = tempfile.mkdtemp(prefix="servaltest_")
+        try:
+            r = run_servalcat(base + ["--tls", "-o", "e1"], wd) # no groups defined anywhere
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("no TLS groups are defined", r.stdout)
+            r = run_servalcat(base + ["--tls_per_chain", "--adp", "aniso", "-o", "e2"], wd) # residual B must be isotropic
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("isotropic residual B", r.stdout)
+        finally:
+            shutil.rmtree(wd)
 
     def test_tls_gradient(self):
         # the gradient of -LL with respect to T, L, S (projected from the per-atom gradient)
