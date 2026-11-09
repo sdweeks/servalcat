@@ -1143,14 +1143,9 @@ class Refine:
 def update_meta(st, stats, ll=None):
     # TODO write stats. probably geom.reporting.get_summary_table should return with _refine_ls_restr.type names
     # should remove st.mod_residues?
+    from servalcat.refine import remarks
     st.helices.clear()
     st.sheets.clear()
-    raw_remarks = [f'REMARK   3',
-                   f'REMARK   3 REFINEMENT.',
-                   f'REMARK   3   PROGRAM     : SERVALCAT {servalcat.__version__}',
-                   f'REMARK   3   AUTHORS     : YAMASHITA,MURSHUDOV',
-                   f'REMARK   3',
-                   ]
     si = gemmi.SoftwareItem()
     si.classification = gemmi.SoftwareItem.Classification.Refinement
     si.name = "Servalcat"
@@ -1159,40 +1154,28 @@ def update_meta(st, stats, ll=None):
     st.meta.software = [si]
 
     ri = gemmi.RefinementInfo()
+    geom_rows = None
     if "geom" in stats:
+        gs = stats["geom"]["summary"]
         restr_stats = []
-        raw_remarks.append("REMARK   3  RMS DEVIATIONS FROM IDEAL VALUES        COUNT    RMS    WEIGHT")
-        for k, n, l, pl in (("r.m.s.d.", "Bond distances, non H", "s_bond_nonh_d",             "BOND LENGTHS REFINED ATOMS        (A)"),
-                            ("r.m.s.d.", "Bond angles, non H", "s_angle_nonh_deg",             "BOND ANGLES REFINED ATOMS   (DEGREES)"),
-                            ("r.m.s.d.", "Torsion angles, period 1", "s_dihedral_angle_1_deg", "TORSION ANGLES, PERIOD 1    (DEGREES)"),
-                            ("r.m.s.d.", "Torsion angles, period 2", "s_dihedral_angle_2_deg", "TORSION ANGLES, PERIOD 2    (DEGREES)"),
-                            ("r.m.s.d.", "Torsion angles, period 3", "s_dihedral_angle_3_deg", "TORSION ANGLES, PERIOD 3    (DEGREES)"),
-                            ("r.m.s.d.", "Torsion angles, period 6", "s_dihedral_angle_6_deg", "TORSION ANGLES, PERIOD 6    (DEGREES)"),
-                            ("r.m.s.d.", "Chiral centres", "s_chiral_restr",                   "CHIRAL-CENTER RESTRAINTS       (A**3)"),
-                            ("r.m.s.d.", "Planar groups", "s_planes",                          "GENERAL PLANES REFINED ATOMS      (A)"),
-                            ("r.m.s.d.", "VDW nonbonded", "s_nbd",                             ""),
-                            ("r.m.s.d.", "VDW torsion", "s_nbtor",                             ""),
-                            ("r.m.s.d.", "VDW hbond", "s_hbond_nbd",                           ""),
-                            ("r.m.s.d.", "VDW metal", "s_metal_ion",                           ""),
-                            ("r.m.s.d.", "VDW dummy", "s_dummy_nbd",                           ""),
-                            ("r.m.s.d.", "VDW nonbonded, symmetry", "s_symmetry_nbd",          ""),
-                            ("r.m.s.d.", "VDW torsion, symmetry", "s_symmetry_nbtor",          ""),
-                            ("r.m.s.d.", "VDW hbond, symmetry", "s_symmetry_hbond_nbd",        ""),
-                            ("r.m.s.d.", "VDW metal, symmetry", "s_symmetry_metal_ion",        ""),
-                            ("r.m.s.d.", "VDW dummy, symmetry", "s_symmetry_dummy_nbd",        "")):
-            if k in stats["geom"]["summary"] and n in stats["geom"]["summary"][k]:
+        geom_rows = dict(restraints=[], b=[])
+        for name, pl, l in remarks.RESTRAINT_ROWS:
+            if "r.m.s.d." in gs and name in gs["r.m.s.d."]:
                 rr = gemmi.RefinementInfo.Restr(l)
-                rr.dev_ideal = round(stats["geom"]["summary"][k].get(n), 4)
-                rr.count = stats["geom"]["summary"]["N restraints"].get(n)
-                rr.weight = round(stats["geom"]["summary"]["Mn(sigma)"].get(n), 4)
+                rr.dev_ideal = round(gs["r.m.s.d."].get(name), 4)
+                rr.count = gs["N restraints"].get(name)
+                rr.weight = round(gs["Mn(sigma)"].get(name), 4)
                 restr_stats.append(rr)
-                if pl:
-                    raw_remarks.append(f"REMARK   3   {pl}:{rr.count:6d} ;{rr.dev_ideal:6.3f} ;{rr.weight:6.3f}")
+                geom_rows["restraints"].append((pl, (rr.count, rr.dev_ideal, rr.weight)))
+        for name, pl in remarks.B_ROWS:
+            if "r.m.s.d." in gs and name in gs["r.m.s.d."]:
+                geom_rows["b"].append((pl, (gs["N restraints"].get(name), gs["r.m.s.d."][name], gs["Mn(sigma)"][name])))
         ri.restr_stats = restr_stats
-        raw_remarks.append("REMARK   3")
+    counts = remarks.atom_counts(st)
+    mean_b = round(numpy.mean([cra.atom.b_iso for cra in st[0].all()]), 2)
     if ll is not None:
         ri.id = ll.refine_id()
-        ri.mean_b = round(numpy.mean([cra.atom.b_iso for cra in st[0].all()]), 2)
+        ri.mean_b = mean_b
         if ll.b_aniso is not None:
             ri.aniso_b = ll.b_aniso
         for k, kd, nd in (("Rwork", "r_work", 4), ("Rfree", "r_free", 4), ("R", "r_all", 4),
@@ -1231,8 +1214,10 @@ def update_meta(st, stats, ll=None):
         ri.bins = bins
         if ri.rfree_set_count > 0:
             ri.cross_validation_method = "THROUGHOUT"
+        remarks.fill_refinement_info(ri, st, stats, ll, counts, stats.get("Ncyc"))
+        st.resolution = ri.resolution_high # REMARK 2
     st.meta.refinement = [ri]
-    st.raw_remarks = raw_remarks
+    st.raw_remarks = remarks.remark3(st, stats, ll, ri, geom_rows, counts, mean_b)
 # update_meta()
 
 def locate_hydrogen_in_map(st, geom, topo, grid):

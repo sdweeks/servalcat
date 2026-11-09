@@ -17,6 +17,8 @@ Output files:
    * ``prefix.mmcif``: refined model (mmCIF format)
    * ``prefix.mtz``: 2Fo-Fc and Fo-Fc maps which can be auto-opened with Coot.
 
+The model files carry a deposition-style ``REMARK 3`` (and the matching ``_refine``, ``_refine_ls_shell``, ``_refine_ls_restr`` and ``_refine_hist`` items in the mmCIF file): data used in the refinement, R-values, the outer resolution bin, the number of protein, nucleic acid, heterogen and solvent atoms, the mean and the overall anisotropic B, the Cruickshank DPI of the coordinates, correlation coefficients, the restraint statistics, the TLS groups, the bulk solvent parameters and other remarks. Items that cannot be known (for example the Wilson B or the experimental details) are ``NULL``. The content does not depend on ``--seq``.
+
 Output logs:
    * ``servalcat.log``
    * ``prefix_stats.json``: refinement statistics per cycle in JSON format

@@ -75,7 +75,7 @@ electron diffraction — and extends it with TLS.
 * **TLS groups from normal modes** — `servalcat util tls_nma` finds domains that move together with an anisotropic or a
   Gaussian elastic network model and writes them as TLS groups, also when a domain is internal or made of several
   stretches or chains ([below](#tls-groups-from-normal-modes-servalcat-util-tls_nma)).
-* **Smaller code base** — no cryo-EM code; a test suite (117 tests) covering the
+* **Smaller code base** — no cryo-EM code; a test suite (126 tests) covering the
   refinement options, TLS, the selection utility, sequence assignment and MTZ column selection.
 
 **Removed compared with upstream**: cryo-EM single-particle programs (`refine_spa`, `refine_spa_norefmac`,
@@ -124,7 +124,7 @@ Output files:
 
 | File | Content |
 |---|---|
-| `refined.pdb`, `refined.mmcif` | refined model |
+| `refined.pdb`, `refined.mmcif` | refined model, with a deposition-style `REMARK 3` / `_refine` header ([below](#remark-3-and-the-refinement-items-of-the-output-models)) |
 | `refined.mtz` | map coefficients `FWT/PHWT` (2mFo-DFc), `DELFWT/PHDELWT` (mFo-DFc), `FOM`, `FC/PHFC`, `FCbulk`, free flags and ML parameters; opens directly in Coot |
 | `refined_stats.json` | statistics of every cycle (R-values, CC, geometry, outliers) |
 | `refined.log` | log, with tables for CCP4 `loggraph` |
@@ -379,6 +379,35 @@ The bars are scaled between the lowest and the highest value of each row. On a t
 gets plain text. If matplotlib is installed, `PREFIX_summary.png` shows the same curves as a graph.
 
 Occupancy refinement is described in [`docs/occ_refine.rst`](docs/occ_refine.rst).
+
+### REMARK 3 and the refinement items of the output models
+
+Every model written by `refine_xtal` (and by `refine_geom`, without the reflection-data parts) carries a `REMARK 3`
+in the layout of a PDB entry, and the matching mmCIF items. Nothing needs another program, and the content does not
+depend on `--seq`. Items that are not known are written as `NULL`.
+
+| Section of `REMARK 3` | Content | mmCIF |
+|---|---|---|
+| `REMARK 2` | resolution | `_refine.ls_d_res_high` |
+| REFINEMENT | program, version, refinement target (ML on amplitudes or intensities, twinned or not) | `_software` |
+| DATA USED IN REFINEMENT | resolution range, completeness, number of reflections (work + free) | `_refine.ls_d_res_*`, `ls_percent_reflns_obs`, `ls_number_reflns_obs` |
+| FIT TO DATA | R-work, R-free, size and count of the test set | `_refine.ls_R_factor_R_work/R_free`, `ls_number_reflns_R_*` |
+| FIT IN THE HIGHEST RESOLUTION BIN | number of bins; range, reflections, completeness, R-work, R-free of the outer bin | `_refine_ls_shell` (all bins) |
+| NUMBER OF NON-HYDROGEN ATOMS | protein, nucleic acid, heterogen (ligands, ions), solvent | `_refine_hist` |
+| B VALUES | mean B, overall anisotropic B (B11 … B23) | `_refine.B_iso_mean`, `aniso_B[i][j]` |
+| ESTIMATED OVERALL COORDINATE ERROR | Cruickshank DPI, from R-work and from R-free | `_refine.overall_SU_R_Cruickshank_DPI`, `pdbx_overall_SU_R_free_Cruickshank_DPI` |
+| CORRELATION COEFFICIENTS | CC(Fo, Fc) work and free (mean of the resolution bins) | `_refine.correlation_coeff_Fo_to_Fc[_free]` |
+| RMS DEVIATIONS FROM IDEAL VALUES | count, r.m.s.d. and weight of the bond, angle, torsion, chiral, plane, non-bonded, torsion-VDW, H-bond, metal and symmetry restraints; restraints on the B values | `_refine_ls_restr` |
+| TLS DETAILS | groups, residue ranges, T, L, S | `_pdbx_refine_tls`, `_pdbx_refine_tls_group` |
+| BULK SOLVENT MODELLING | mask method, probe and shrinkage radii, k_sol and B_sol | |
+| OTHER REFINEMENT REMARKS | riding hydrogens, number of cycles, weight of the geometry restraints | |
+
+The Cruickshank DPI is σ(r) = √(N<sub>atoms</sub> / (N<sub>obs</sub> − 4 N<sub>atoms</sub>)) · C<sup>−1/3</sup> · R · d<sub>min</sub>
+(N<sub>obs</sub>: reflections used, C: completeness as a fraction). It is the usual estimate of the error of the coordinates and
+differs from REFMAC's likelihood-based ESU. The correlation coefficients are the mean over the resolution bins, not the
+overall value. The data cutoff, the Wilson B, the way the test set was chosen, the experimental details (`REMARK 200`,
+`280`) and the main-chain/side-chain split of the B-factor restraints are not available to the program and are `NULL` or
+absent. The restraints on the B values are listed as bonded (1-2), (1-3) and neighbours in space.
 
 ### Other commands
 

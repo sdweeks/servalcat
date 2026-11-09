@@ -779,7 +779,20 @@ def update_meta_tls(st, model):
     if not st.meta.refinement:
         st.meta.refinement = [gemmi.RefinementInfo()]
     st.meta.refinement[0].tls_groups = to_gemmi_groups(st, model)
-    st.raw_remarks = list(st.raw_remarks) + remark3_lines(st, model)
+    remarks = list(st.raw_remarks)
+    new = remark3_lines(st, model)
+    # in the position of a REFMAC file: before the bulk solvent section
+    at = next((i for i, l in enumerate(remarks) if l.startswith("REMARK   3  BULK SOLVENT")), None)
+    if at is not None:
+        at -= 1 if remarks[at - 1] == "REMARK   3" else 0 # the section starts with its own blank line
+        remarks[at:at] = new
+    else:
+        remarks += new
+    out = []
+    for l in remarks: # no two empty lines in a row
+        if not (l == "REMARK   3" and out and out[-1] == "REMARK   3"):
+            out.append(l)
+    st.raw_remarks = out
 
 def tls_config_dict(st, model, with_parameters=True):
     """TLS definition in the format of the refine.tls section of the config file"""
