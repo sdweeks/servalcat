@@ -644,7 +644,7 @@ servalcat util tls_nma --model refined.pdb --hklin data.mtz -o tlsnma  # also te
   readable by any program) and `PREFIX_domains.pdb`, the model with the domain number as B-factor, to colour by B in Coot or PyMOL.
 * Both network models are implemented here with scipy (sparse matrices; shift-invert for the lowest modes of large networks,
   about 10 times faster than a full diagonalisation) from the standard definitions. The eigenvalues and eigenvectors agree with those of
-  [ProDy](https://github.com/prody/ProDy) 2.6.1 (MIT licence) to 1e-14; ProDy is not needed (the test suite compares with it if it is installed).
+  [ProDy](https://github.com/prody/ProDy) 2.6.1 (MIT licence) to 1e-14; ProDy is not needed to run Servalcat; the test suite compares with it (installed by `pip install ".[test]"`, skipped if missing).
 
 **What it does and does not show.** On pseudo-proteins with a known answer (residues 41–80 a compact internal domain, 1–40 and 81–120
 the other domain, touching weakly), both models found exactly that: one group made of the two flanks and one internal group, for 1 to
@@ -664,10 +664,11 @@ This fork is installed from source (a compiled C++ extension is built, with GEMM
 
 | | |
 |---|---|
-| Operating system | Linux or macOS in principle; built and tested only on Ubuntu 24.04 (x86-64) |
-| Python | 3.10 or newer (tested with 3.13) |
+| Operating system | Linux or macOS in principle; built and tested only on Ubuntu 24.04 and Ubuntu 26.04.1 under WSL2 (x86-64) |
+| Python | 3.10 or newer (tested with 3.13 and 3.14.4) |
 | Python packages | `numpy`, `scipy`, `pandas`, `omegaconf==2.3.0`, `packaging`, `nanobind-backend` — installed automatically |
-| Build tools | a C++17 compiler (tested with GCC 13), CMake ≥ 3.15 (3.28), Ninja or make, git. `scikit-build-core` and `nanobind` ≥ 3.1 are fetched by pip during the build |
+| Optional Python packages | `matplotlib` for the graphs (`PREFIX_summary.png`, `PREFIX_scan.png`): `pip install ".[plot]"`. For the test suite `pytest`, `matplotlib` and `prody` ≥ 2.6.1: `pip install ".[test]"` |
+| Build tools | a C++17 compiler (tested with GCC 13 and 15.2), CMake ≥ 3.15 (tested with 3.28 and 4.2.3), Ninja or make (tested with Ninja 1.13.2), git. `scikit-build-core` and `nanobind` ≥ 3.1 are fetched by pip during the build (scikit-build-core 1.1.2 and nanobind 3.1.0 in the 26.04 build). On Ubuntu: `sudo apt install build-essential cmake ninja-build python3-venv python3-dev libeigen3-dev` |
 | Eigen | Eigen 3.4 headers: see below |
 | Internet during the build | CMake downloads [GEMMI](https://github.com/project-gemmi/gemmi) (version 0.7.6-dev; the pinned commit is in `CMakeLists.txt`), which is built into the package. For an offline build place a GEMMI checkout in a `gemmi/` directory of the source tree |
 | **Monomer library** | required at run time for restrained refinement, see below |
@@ -680,7 +681,7 @@ This fork is installed from source (a compiled C++ extension is built, with GEMM
 git clone --recurse-submodules --branch servalcatX https://github.com/sdweeks/servalcat.git
 cd servalcat
 pip uninstall servalcat    # only if upstream Servalcat is installed (same package name)
-pip install .
+pip install ".[plot]"      # or ".[test]" to run the tests too, or just "." without the graphs
 ```
 
 `--branch servalcatX` selects the branch that contains the features described above; the `main`
@@ -723,12 +724,14 @@ restraints for. Residues and ligands that are not in the library need a dictiona
 ### Tests
 
 ```shell
-pip install pytest
-CLIBD_MON=/path/to/monomers/ python -m pytest -p servalcat tests/
+pip install ".[test]"      # pytest, matplotlib and prody
+CLIBD_MON=/path/to/monomers/ pytest -p servalcat tests/
 ```
 
-(`-p servalcat` imports Servalcat first, which makes its bundled GEMMI the `gemmi` module.) The full run takes
-about 6 minutes. If you use Servalcat from Python: `import servalcat` before `import gemmi`, and
+(`-p servalcat` imports Servalcat first, which makes its bundled GEMMI the `gemmi` module. Use the `pytest` command,
+not `python -m pytest`: run from the source tree, `python -m` would import the uncompiled `servalcat/` directory
+instead of the installed package.) The full run takes
+about 7 minutes. If you use Servalcat from Python: `import servalcat` before `import gemmi`, and
 `from servalcat import utils` before importing other submodules.
 
 ### Troubleshooting

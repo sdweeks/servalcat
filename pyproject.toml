@@ -19,6 +19,10 @@ license = {text = "MPL-2.0"}
 
 [project.optional-dependencies]
 external-gemmi = ["gemmi==0.7.5"]
+# graphs: PREFIX_summary.png (refine_xtal) and PREFIX_scan.png (tls_select, tls_bfit, tls_nma)
+plot = ["matplotlib"]
+# test suite: pytest runs it; ProDy is the reference for the tls_nma eigenvalue test
+test = ["pytest", "matplotlib", "prody>=2.6.1"]
 
 [project.scripts]
 servalcat = "servalcat.__main__:main"
