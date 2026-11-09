@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core", "nanobind>=3.1.0,<4"]
+requires = ["scikit-build-core", "nanobind>=3.1.0,<4", "nanobind-backend>=1.0"]
 build-backend = "scikit_build_core.build"
 
 # https://packaging.python.org/en/latest/specifications/declaring-project-metadata/
@@ -8,7 +8,7 @@ name = "servalcat"
 dynamic = ["version"]
 requires-python = ">=3.10"
 dependencies = ['packaging', 'numpy>=1.15', 'scipy', 'pandas>=1.1.0', 'omegaconf==2.3.0', "nanobind-backend>=1.0"]
-description="Structure refinement and validation for crystallography and single particle analysis"
+description="Structure refinement and validation for X-ray crystallography"
 readme = "README.md"
 authors = [
   { name = "Keitaro Yamashita", email = "" },
@@ -19,10 +19,13 @@ license = {text = "MPL-2.0"}
 
 [project.optional-dependencies]
 external-gemmi = ["gemmi==0.7.5"]
+# graphs: PREFIX_summary.png (refine_xtal) and PREFIX_scan.png (tls_select, tls_bfit, tls_nma)
+plot = ["matplotlib"]
+# test suite: pytest runs it; ProDy is the reference for the tls_nma eigenvalue test
+test = ["pytest", "matplotlib", "prody>=2.6.1"]
 
 [project.scripts]
 servalcat = "servalcat.__main__:main"
-refmacat  = "servalcat.refmac.refmac_wrapper:command_line"
 
 [tool.scikit-build]
 #build-dir = "/tmp/gemmi_build2/{wheel_tag}"

@@ -8,7 +8,6 @@ Mozilla Public License, version 2.0; see LICENSE.
 from __future__ import absolute_import, division, print_function, generators
 from servalcat.utils import logger
 from servalcat.utils import fileio
-from servalcat.utils import symmetry
 from servalcat.utils import model
 from servalcat.utils import hkl
 from servalcat.utils import restraints
@@ -26,73 +25,19 @@ import re
 import argparse
 
 def add_arguments(p):
-    subparsers = p.add_subparsers(dest="subcommand")
+    subparsers = p.add_subparsers(dest="subcommand", title="subcommands", metavar="<subcommand>")
 
     # show
-    parser = subparsers.add_parser("show", description = 'Show file info supported by the program')
+    parser = subparsers.add_parser("show", help='Show file info supported by the program', description='Show file info supported by the program')
     parser.add_argument('files', nargs='+')
 
     # json2csv
-    parser = subparsers.add_parser("json2csv", description = 'Convert json to csv for plotting')
+    parser = subparsers.add_parser("json2csv", help='Convert json to csv for plotting', description='Convert json to csv for plotting')
     parser.add_argument('json')
     parser.add_argument('-o', '--output_prefix')
 
-    # symmodel
-    parser = subparsers.add_parser("symmodel", description="Add symmetry annotation to model")
-    parser.add_argument('--model', required=True)
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('--map', help="Take box size from the map")
-    group.add_argument('--cell', type=float, nargs=6, metavar=("a", "b", "c", "alpha", "beta", "gamma"),
-                       help="Box size")
-    sym_group = parser.add_argument_group("symmetry")
-    symmetry.add_symmetry_args(sym_group, require_pg=True)
-    parser.add_argument('--contacting_only', action="store_true", help="Filter out non-contacting NCS")
-    parser.add_argument('--chains', nargs="*", action="append", help="Select chains to keep")
-    parser.add_argument('--howtoname', choices=["dup", "short", "number"], default="short",
-                        help="How to decide new chain IDs in expanded model (default: short); "
-                        "dup: use original chain IDs (with different segment IDs), "
-                        "short: use unique new IDs, "
-                        "number: add number to original chain ID")
-    parser.add_argument('--biomt', action="store_true", help="Add BIOMT also")
-    parser.add_argument('-o', '--output_prefix')
-    parser.add_argument('--pdb', action="store_true", help="Write a pdb file")
-    parser.add_argument('--cif', action="store_true", help="Write a cif file")
-
-    # helical_biomt
-    parser = subparsers.add_parser("helical_biomt", description="generate BIOMT of helical reconstruction for PDB deposition")
-    parser.add_argument('--model', required=True)
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('--map', help="Take box size from the map")
-    group.add_argument('--cell', type=float, nargs=6, metavar=("a", "b", "c", "alpha", "beta", "gamma"),
-                       help="Box size")
-    sym_group = parser.add_argument_group("symmetry")
-    symmetry.add_symmetry_args(sym_group, require_pg=True)
-    parser.add_argument('--start', type=int)
-    parser.add_argument('--end', type=int)
-    parser.add_argument('--howtoname', choices=["dup", "short", "number"], default="short",
-                        help="How to decide new chain IDs in expanded model (default: short); "
-                        "dup: use original chain IDs (with different segment IDs), "
-                        "short: use unique new IDs, "
-                        "number: add number to original chain ID")
-    parser.add_argument('-o', '--output_prefix')
-
-    # expand
-    parser = subparsers.add_parser("expand", description="Expand symmetry")
-    parser.add_argument('--model', required=True)
-    parser.add_argument('--chains', nargs="*", action="append", help="Select chains to keep")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('--howtoname', choices=["dup", "short", "number"], default="short",
-                       help="How to decide new chain IDs in expanded model (default: short); "
-                       "dup: use original chain IDs (with different segment IDs), "
-                       "short: use unique new IDs, "
-                       "number: add number to original chain ID")
-    group.add_argument("--split", action="store_true", help="split file for each operator")
-    parser.add_argument('-o', '--output_prefix')
-    parser.add_argument('--pdb', action="store_true", help="Write a pdb file")
-    parser.add_argument('--cif', action="store_true", help="Write a cif file")
-
     # h_add
-    parser = subparsers.add_parser("h_add", description = 'Add hydrogen in riding position')
+    parser = subparsers.add_parser("h_add", help='Add hydrogen in riding position', description='Add hydrogen in riding position')
     parser.add_argument('model')
     parser.add_argument('--ligand', nargs="*", action="append")
     parser.add_argument("--monlib",
@@ -102,7 +47,7 @@ def add_arguments(p):
     parser.add_argument('--map', help="Expects hydrogen-omit normalised Fo-Fc map")
 
     # add_op3
-    parser = subparsers.add_parser("add_op3", description = "Add OP3 atoms to 5' ends")
+    parser = subparsers.add_parser("add_op3", help="Add OP3 atoms to 5' ends", description="Add OP3 atoms to 5' ends")
     parser.add_argument('model')
     parser.add_argument('--chains', nargs="*", action="append", help="For selected chains only")
     parser.add_argument('--ligand', nargs="*", action="append")
@@ -111,7 +56,7 @@ def add_arguments(p):
     parser.add_argument('-o','--output_prefix')
 
     # map_peaks
-    parser = subparsers.add_parser("map_peaks", description = 'List density peaks and write a coot script')
+    parser = subparsers.add_parser("map_peaks", help='List density peaks and write a coot script', description='List density peaks and write a coot script')
     parser.add_argument('--model', required=True, help="Model")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--map', help="Map file")
@@ -128,7 +73,7 @@ def add_arguments(p):
     parser.add_argument('-o','--output_prefix', default="peaks")
     
     # h_density
-    parser = subparsers.add_parser("h_density", description = 'Hydrogen density analysis')
+    parser = subparsers.add_parser("h_density", help='Hydrogen density analysis', description='Hydrogen density analysis')
     parser.add_argument('--model', required=True, help="Model with hydrogen atoms")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--map', help="Fo-Fc map file")
@@ -147,7 +92,7 @@ def add_arguments(p):
     parser.add_argument('-o','--output_prefix')
 
     # fix_link
-    parser = subparsers.add_parser("fix_link", description = 'Fix LINKR/_struct_conn records in the model')
+    parser = subparsers.add_parser("fix_link", help='Fix LINKR/_struct_conn records in the model', description='Fix LINKR/_struct_conn records in the model')
     parser.add_argument('model')
     parser.add_argument('--ligand', nargs="*", action="append")
     parser.add_argument("--monlib",
@@ -157,17 +102,17 @@ def add_arguments(p):
     parser.add_argument('-o','--output_prefix', help="Default: input_fixlink.{pdb|mmcif}")
 
     # merge_models
-    parser = subparsers.add_parser("merge_models", description = 'Merge multiple model files')
+    parser = subparsers.add_parser("merge_models", help='Merge multiple model files', description='Merge multiple model files')
     parser.add_argument('models', nargs="+")
     parser.add_argument('-o','--output', required=True)
 
     # merge_dicts
-    parser = subparsers.add_parser("merge_dicts", description = 'Merge restraint dictionary cif files')
+    parser = subparsers.add_parser("merge_dicts", help='Merge restraint dictionary cif files', description='Merge restraint dictionary cif files')
     parser.add_argument('cifs', nargs="+")
     parser.add_argument('-o','--output', default="merged.cif", help="Output cif file (default: %(default)s)")
 
     # geom
-    parser = subparsers.add_parser("geom", description = 'Calculate geometry and show outliers')
+    parser = subparsers.add_parser("geom", help='Calculate geometry and show outliers', description='Calculate geometry and show outliers')
     parser.add_argument('model')
     parser.add_argument('--ligand', nargs="*", action="append")
     parser.add_argument("--monlib",
@@ -191,7 +136,7 @@ def add_arguments(p):
                         help="default: taken from input file")
 
     # conf
-    parser = subparsers.add_parser("conf", description = 'Compare conformations')
+    parser = subparsers.add_parser("conf", help='Compare conformations', description='Compare conformations')
     parser.add_argument('models', nargs="+")
     parser.add_argument("--min_diff", type=float, default=60.)
     parser.add_argument('--ligand', nargs="*", action="append")
@@ -202,25 +147,18 @@ def add_arguments(p):
                         help="")
 
     # adp
-    parser = subparsers.add_parser("adp", description = 'ADP analysis')
+    parser = subparsers.add_parser("adp", help='ADP analysis', description='ADP analysis')
     parser.add_argument('model')
     parser.add_argument('-o', '--output_prefix',
                         help="default: taken from input file")
     
-    # power
-    parser = subparsers.add_parser("power", description = 'Show power spectrum')
-    parser.add_argument("--map",  nargs="*", action="append")
-    parser.add_argument("--halfmaps",  nargs="*", action="append")
-    parser.add_argument('--mask', help='Mask file')
-    parser.add_argument('-d', '--resolution', type=float)
-    parser.add_argument('-o', '--output_prefix', default="power")
-
     # fcalc
-    parser = subparsers.add_parser("fcalc", description = 'Structure factor from model')
+    parser = subparsers.add_parser("fcalc", help='Structure factor from model', description='Structure factor from model')
     parser.add_argument('--model', required=True)
     parser.add_argument("--no_expand_ncs", action='store_true', help="Do not expand strict NCS in MTRIX or _struct_ncs_oper")
     parser.add_argument("--method", choices=["fft", "direct"], default="fft")
-    parser.add_argument("--source", choices=["electron", "xray", "neutron", "custom"], default="electron")
+    parser.add_argument("--source", choices=["electron", "xray", "neutron", "custom"], default="xray",
+                        help="Radiation source (default: %(default)s)")
     parser.add_argument('--ligand', nargs="*", action="append")
     parser.add_argument("--monlib",
                         help="Monomer library path. Default: $CLIBD_MON")
@@ -236,71 +174,48 @@ def add_arguments(p):
     parser.add_argument('-d', '--resolution', type=float, required=True)
     parser.add_argument('-o', '--output_prefix')
 
-    # nemap
-    parser = subparsers.add_parser("nemap", description = 'Normalized expected map calculation from half maps')
-    parser.add_argument("--halfmaps", required=True, nargs=2)
-    parser.add_argument('--pixel_size', type=float, help='Override pixel size (A)')
-    parser.add_argument("--half1_only", action='store_true', help="Only use half 1 for map calculation (use half 2 only for noise estimation)")
-    parser.add_argument('-B', type=float, help="local B value")
-    parser.add_argument("--no_fsc_weights", action='store_true',
-                        help="Just for debugging purpose: turn off FSC-based weighting")
-    parser.add_argument("--sharpening_b", type=float,
-                        help="Use B value (negative value for sharpening) instead of standard deviation of the signal")
-    parser.add_argument("-d", '--resolution', type=float)
-    parser.add_argument('-m', '--mask', help="mask file")
-    parser.add_argument('-o', '--output_prefix', default='nemap')
-    parser.add_argument("--trim", action='store_true', help="Write trimmed maps")
-    parser.add_argument("--trim_mtz", action='store_true', help="Write trimmed mtz")
-    parser.add_argument("--local_fourier_weighting_with", type=float, default=0,
-                        help="Experimental: give kernel size in A^-1 unit to use local Fourier weighting instead of resolution-dependent weights")
-
     # blur
-    parser = subparsers.add_parser("blur", description = 'Blur data by specified B value')
+    parser = subparsers.add_parser("blur", help='Blur data by specified B value', description='Blur data by specified B value')
     parser.add_argument('--hklin', required=True, help="input MTZ file")
     parser.add_argument('-B', type=float, required=True, help="B value for blurring (negative value for sharpening)")
     parser.add_argument('-o', '--output_prefix')
 
-    # mask_from_model
-    parser = subparsers.add_parser("mask_from_model", description = 'Make a mask from model')
-    parser.add_argument("--map", required=True, help="For unit cell and pixel size reference")
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--selection")
-    parser.add_argument('--radius', type=float, required=True,
-                        help='Radius in angstrom')
-    parser.add_argument('--soft_edge', type=float, default=0,
-                        help='Soft edge (default: %(default).1f)')
-    parser.add_argument('-o', '--output', default="mask_from_model.mrc")
-    
-    # applymask (and normalize within mask)
-    parser = subparsers.add_parser("applymask", description = 'Apply mask and optionally normalize map within mask')
-    parser.add_argument("--map", required=True)
-    parser.add_argument('--mask', required=True, help='Mask file')
-    parser.add_argument("--normalize", action='store_true',
-                        help="Normalize map values using mean and sd within the mask")
-    parser.add_argument("--trim", action='store_true', help="Write trimmed map")
-    parser.add_argument('--mask_cutoff', type=float, default=0.5,
-                        help="cutoff value for normalization and trimming (default: %(default)s)")
-    parser.add_argument('-o', '--output_prefix')
+    # tls_select
+    from servalcat.refine import tls_select
+    parser = subparsers.add_parser("tls_select", help='Automated selection of TLS groups', description='Automated selection of TLS groups')
+    tls_select.add_arguments(parser)
 
-    # map2mtz
-    parser = subparsers.add_parser("map2mtz", description = 'FFT map and write an mtz')
-    parser.add_argument("--map", required=True)
-    parser.add_argument("-d", '--resolution', type=float)
-    parser.add_argument('-o', '--output')
+    # tls_bfit
+    parser = subparsers.add_parser("tls_bfit", help='Automated selection of TLS groups from a fit to the B-factors (TLSMD-like)',
+                                   description='Automated selection of TLS groups from a fit to the B-factors')
+    tls_select.add_arguments(parser, method="bfactor")
+    parser.set_defaults(method="bfactor")
+
+    # tls_nma
+    from servalcat.refine import tls_nma
+    parser = subparsers.add_parser("tls_nma", help='TLS groups from domains found by normal-mode analysis (ANM or GNM)',
+                                   description='TLS groups from domains found by normal-mode analysis')
+    tls_nma.add_arguments(parser)
+
+    # occ_groups
+    from servalcat.refine import occ_groups
+    parser = subparsers.add_parser("occ_groups", help='Occupancy groups from alternative conformations and partial occupancies',
+                                   description=occ_groups.UTIL_DESCRIPTION)
+    occ_groups.add_arguments(parser)
 
     # sm2mm
-    parser = subparsers.add_parser("sm2mm", description = 'Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)')
+    parser = subparsers.add_parser("sm2mm", help='Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)', description='Small molecule files (cif/hkl/res/ins) to macromolecules (pdb/mmcif/mtz)')
     parser.add_argument('files', nargs='+', help='Cif/ins/res/hkl files')
     parser.add_argument('-o', '--output_prefix')
 
     # mm2ins
-    parser = subparsers.add_parser("mm2ins", description = 'convert pdb/mmcif to ins for shelxl/olex2')
+    parser = subparsers.add_parser("mm2ins", help='convert pdb/mmcif to ins for shelxl/olex2', description='convert pdb/mmcif to ins for shelxl/olex2')
     parser.add_argument('model')
     parser.add_argument('--hklin')
     parser.add_argument('-o', '--output')
 
     # seq
-    parser = subparsers.add_parser("seq", description = 'Print/align model sequence')
+    parser = subparsers.add_parser("seq", help='Print/align model sequence', description='Print/align model sequence')
     parser.add_argument("--model", required=True)
     parser.add_argument('--seq', nargs="*", action="append", help="Sequence file(s)")
     parser.add_argument('--scoring', nargs=6, type=int, default=(1, 0, -1, -1, 0, -1),
@@ -308,7 +223,7 @@ def add_arguments(p):
                         help="scoring function. default: %(default)s")
 
     # dnarna
-    parser = subparsers.add_parser("dnarna", description = 'DNA to RNA or RNA to DNA model conversion')
+    parser = subparsers.add_parser("dnarna", help='DNA to RNA or RNA to DNA model conversion', description='DNA to RNA or RNA to DNA model conversion')
     parser.add_argument("model")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--to_dna', action='store_true', help="To DNA")
@@ -317,7 +232,7 @@ def add_arguments(p):
     parser.add_argument('-o', '--output')
 
     # exte
-    parser = subparsers.add_parser("exte", description = 'Create restraints using external structures (experimental)')
+    parser = subparsers.add_parser("exte", help='Create restraints using external structures (experimental)', description='Create restraints using external structures (experimental)')
     parser.add_argument('model')
     parser.add_argument("--reference", required=True)
     parser.add_argument('-o', '--output', default="exte.txt")
@@ -336,174 +251,6 @@ def parse_args(arg_list):
     add_arguments(parser)
     return parser.parse_args(arg_list)
 # parse_args()
-
-def symmodel(args):
-    set_prefix(args)
-    if args.chains: args.chains = sum(args.chains, [])
-    model_format = fileio.check_model_format(args.model)
-
-    howtoname = dict(dup=gemmi.HowToNameCopiedChain.Dup,
-                     short=gemmi.HowToNameCopiedChain.Short,
-                     number=gemmi.HowToNameCopiedChain.AddNumber)[args.howtoname]
-
-    if (args.twist, args.rise).count(None) == 1:
-        raise SystemExit("ERROR: give both helical parameters --twist and --rise")
-
-    is_helical = args.twist is not None
-    st, cif_ref = fileio.read_structure_from_pdb_and_mmcif(args.model)
-    st.spacegroup_hm = "P 1"
-    map_and_start = None
-    if args.map:
-        logger.writeln("Reading cell from map")
-        map_and_start = fileio.read_ccp4_map(args.map, header_only=True)
-        st.cell = map_and_start[0].unit_cell
-    elif args.cell:
-        st.cell = gemmi.UnitCell(*args.cell)
-    elif not st.cell.is_crystal():
-        raise SystemExit("Error: Unit cell parameters look wrong. Please use --map or --cell")
-
-    if args.chains:
-        logger.writeln("Keep {} chains only".format(" ".join(args.chains)))
-        chains = set(args.chains)
-        for m in st:
-            to_del = [c.name for c in m if c.name not in chains]
-            for c in to_del: m.remove_chain(c)
-        if st[0].count_atom_sites() == 0:
-            raise SystemExit("ERROR: no atoms left. Check --chains option.")
-
-    all_chains = [c.name for c in st[0] if c.name not in st[0]]
-
-    symmetry.update_ncs_from_args(args, st, map_and_start=map_and_start, filter_contacting=args.contacting_only)
-
-    if args.biomt:
-        st.assemblies.clear()
-        st.raw_remarks = []
-        a = model.prepare_assembly("1", all_chains, st.ncs, is_helical=is_helical)
-        st.assemblies.append(a)
-
-    if args.pdb or args.cif:
-        fileio.write_model(st, args.output_prefix, pdb=args.pdb, cif=args.cif, cif_ref=cif_ref)
-    else:
-        fileio.write_model(st, file_name=args.output_prefix+model_format, cif_ref=cif_ref)
-
-    # Sym expand
-    model.expand_ncs(st, howtoname=howtoname)
-    st.assemblies.clear()
-    args.output_prefix += "_expanded"
-    if args.pdb or args.cif:
-        fileio.write_model(st, args.output_prefix, pdb=args.pdb, cif=args.cif)
-    else:
-        fileio.write_model(st, file_name=args.output_prefix+model_format)
-# symmodel()
-
-def helical_biomt(args):
-    if (args.twist, args.rise).count(None) > 0:
-        raise SystemExit("ERROR: give helical parameters --twist and --rise")
-    set_prefix(args)
-    model_format = fileio.check_model_format(args.model)
-    howtoname = dict(dup=gemmi.HowToNameCopiedChain.Dup,
-                     short=gemmi.HowToNameCopiedChain.Short,
-                     number=gemmi.HowToNameCopiedChain.AddNumber)[args.howtoname]
-
-    st, cif_ref = fileio.read_structure_from_pdb_and_mmcif(args.model)
-    st.spacegroup_hm = "P 1"
-    map_and_start = None
-    if args.map:
-        logger.writeln("Reading cell from map")
-        map_and_start = fileio.read_ccp4_map(args.map, header_only=True)
-        st.cell = map_and_start[0].unit_cell
-    elif args.cell:
-        st.cell = gemmi.UnitCell(*args.cell)
-    elif not st.cell.is_crystal():
-        raise SystemExit("Error: Unit cell parameters look wrong. Please use --map or --cell")
-
-    all_chains = [c.name for c in st[0] if c.name not in st[0]]
-
-    ncsops = symmetry.ncsops_from_args(args, st.cell, map_and_start=map_and_start, st=st,
-                                       helical_min_n=args.start, helical_max_n=args.end)
-    #ncsops = [x for x in ncsops if not x.tr.is_identity()] # remove identity
-
-    logger.writeln("")
-    logger.writeln("-------------------------------------------------------------")
-    logger.writeln("You may need to write following matrices in OneDep interface:")
-    for idx, op in enumerate(ncsops):
-        logger.writeln("")
-        logger.writeln("operator {}".format(idx+1))
-        mat = op.tr.mat.tolist()
-        vec = op.tr.vec.tolist()
-        for i in range(3):
-            mstr = ["{:10.6f}".format(mat[i][j]) for j in range(3)]
-            logger.writeln("{} {:14.5f}".format(" ".join(mstr), vec[i]))
-    logger.writeln("-------------------------------------------------------------")
-    logger.writeln("")
-
-    # BIOMT
-    st.assemblies.clear()
-    st.raw_remarks = []
-    a = model.prepare_assembly("1", all_chains, ncsops, is_helical=True)
-    st.assemblies.append(a)
-
-    fileio.write_model(st, args.output_prefix, pdb=(model_format == ".pdb"), cif=True, cif_ref=cif_ref)
-    logger.writeln("")
-    logger.writeln("These {}.* files may be used for deposition (once OneDep implemented reading BIOMT from file..)".format(args.output_prefix))
-    logger.writeln("")
-    # BIOMT expand
-    st.transform_to_assembly("1", howtoname)
-    args.output_prefix += "_expanded"
-    fileio.write_model(st, file_name=args.output_prefix+model_format)
-    logger.writeln(" note that this expanded model file is just for visual inspection, *not* for deposition!")
-# helical_biomt()
-
-def symexpand(args):
-    set_prefix(args)
-    if args.chains: args.chains = sum(args.chains, [])
-    model_format = fileio.check_model_format(args.model)
-    if not args.split:
-        howtoname = dict(dup=gemmi.HowToNameCopiedChain.Dup,
-                         short=gemmi.HowToNameCopiedChain.Short,
-                         number=gemmi.HowToNameCopiedChain.AddNumber)[args.howtoname]
-
-    st = fileio.read_structure(args.model)
-
-    if args.chains:
-        logger.writeln("Keep {} chains only".format(" ".join(args.chains)))
-        chains = set(args.chains)
-        for m in st:
-            to_del = [c.name for c in m if c.name not in chains]
-            for c in to_del: m.remove_chain(c)
-
-    all_chains = [c.name for c in st[0] if c.name not in st[0]]
-
-    if len(st.ncs) > 0:
-        symmetry.show_ncs_operators_axis_angle(st.ncs)
-        non_given = [op for op in st.ncs if not op.given]
-        if len(non_given) > 0:
-            if args.split:
-                for i, op in enumerate(st.ncs):
-                    if op.given: continue
-                    st_tmp = st.clone()
-                    for m in st_tmp: m.transform_pos_and_adp(op.tr)
-                    output_prefix = args.output_prefix + "_ncs_{:02d}".format(i+1)
-                    if args.pdb or args.cif:
-                        fileio.write_model(st_tmp, output_prefix, pdb=args.pdb, cif=args.cif)
-                    else:
-                        fileio.write_model(st_tmp, file_name=output_prefix+model_format)
-            else:
-                st_tmp = st.clone()
-                model.expand_ncs(st_tmp, howtoname=howtoname)
-                output_prefix = args.output_prefix + "_ncs_expanded"
-                if args.pdb or args.cif:
-                    fileio.write_model(st_tmp, output_prefix, pdb=args.pdb, cif=args.cif)
-                else:
-                    fileio.write_model(st_tmp, file_name=output_prefix+model_format)
-        else:
-            logger.writeln("All operators are already expanded (marked as given). Exiting.")
-    else:
-        logger.writeln("No NCS operators found. Exiting.")
-    
-    if len(st.assemblies) > 0: # should we support BIOMT?
-        pass
-# symexpand()
 
 def h_add(args):
     set_prefix(args)
@@ -1143,72 +890,6 @@ def adp_stats(args):
         logger.writeln("check histogram: {}".format(ofs.name))
 # adp_stats()
 
-def show_power(args):
-    maps_in = []
-    if args.map:
-        print(args.map)
-        print(sum(args.map, []))
-        maps_in = [(f,) for f in sum(args.map, [])]
-        
-    if args.halfmaps:
-        args.halfmaps = sum(args.halfmaps, [])
-        if len(args.halfmaps)%2 != 0:
-            raise RuntimeError("Number of half maps is not even.")
-        maps_in.extend([(args.halfmaps[2*i],args.halfmaps[2*i+1]) for i in range(len(args.halfmaps)//2)])
-        
-    if args.mask:
-        mask = fileio.read_ccp4_map(args.mask)[0]
-    else:
-        mask = None
-
-    hkldata = None
-    labs = []
-    for mapin in maps_in: # TODO rewrite in faster way
-        ms = [fileio.read_ccp4_map(f) for f in mapin]
-        d_min = args.resolution
-        if d_min is None:
-            d_min = maps.nyquist_resolution(ms[0][0])
-            logger.writeln("WARNING: --resolution is not specified. Using Nyquist resolution: {:.2f}".format(d_min))
-        tmp = maps.mask_and_fft_maps(ms, d_min, mask)
-        labs.append("F{:02d}".format(len(labs)+1))
-        tmp.df.rename(columns=dict(FP=labs[-1]), inplace=True)
-        if hkldata is None:
-            hkldata = tmp
-        else:
-            if hkldata.cell.parameters != tmp.cell.parameters: raise RuntimeError("Different unit cell!")
-            hkldata.merge(tmp.df[["H","K","L",labs[-1]]])
-
-    if not labs:
-        raise SystemExit("No map files given. Exiting.")
-            
-    hkldata.setup_relion_binning("stat")
-
-    logger.writeln("Input:")
-    for i in range(len(maps_in)):
-        logger.writeln("{} from {}".format(labs[i], " ".join(maps_in[i])))
-    logger.write("\n")
-    
-    logger.write("""$TABLE: Power spectrum :
-$GRAPHS
-: log10(Mn(|F|^2)) :A:1,{}:
-$$
-1/resol^2 n d_max d_min {}
-$$
-$$
-""".format(",".join([str(i+5) for i in range(len(labs))]), " ".join(labs)))
-    print(hkldata.df)
-    abssqr = dict((lab, numpy.abs(hkldata.df[lab].to_numpy())**2) for lab in labs)
-    for i_bin, idxes in hkldata.binned("stat"):
-        bin_d_min = hkldata.binned_df["stat"].d_min[i_bin]
-        bin_d_max = hkldata.binned_df["stat"].d_max[i_bin]
-        logger.write("{:.4f} {:7d} {:7.3f} {:7.3f}".format(1/bin_d_min**2, len(idxes), bin_d_max, bin_d_min,))
-        for lab in labs:
-            pwr = numpy.log10(numpy.average(abssqr[lab][idxes]))
-            logger.write(" {:.4e}".format(pwr))
-        logger.write("\n")
-    logger.write("$$\n")
-# show_power()
-
 def fcalc(args):
     if (args.auto_box_with_padding, args.cell).count(None) == 0:
         raise SystemExit("Error: you cannot specify both --auto_box_with_padding and --cell")
@@ -1267,61 +948,6 @@ def fcalc(args):
     hkldata.write_mtz(args.output_prefix+".mtz", labout, types=dict(IC="J", SIGIC="Q", SIGFC="Q"))
 # fcalc()
 
-def nemap(args):
-    from servalcat.spa import fofc
-
-    if (args.trim or args.trim_mtz) and args.mask is None:
-        raise SystemExit("\nError: You need to give --mask as you requested --trim or --trim_mtz.\n")
-    
-    if args.mask:
-        mask = fileio.read_ccp4_map(args.mask)[0]
-    else:
-        mask = None
-
-    halfmaps = fileio.read_halfmaps(args.halfmaps, pixel_size=args.pixel_size)
-    if args.resolution is None:
-        args.resolution = maps.nyquist_resolution(halfmaps[0][0])
-        logger.writeln("WARNING: --resolution is not specified. Using Nyquist resolution: {:.2f}".format(args.resolution))
-
-    d_min = args.resolution
-    if args.local_fourier_weighting_with > 0:
-        d_min = 1 / (args.local_fourier_weighting_with + 1 / d_min)
-        logger.writeln("adjusting d_min= {:.2f} for local correlation".format(d_min))
-    hkldata = maps.mask_and_fft_maps(halfmaps, d_min, mask)
-
-    if args.local_fourier_weighting_with > 0:
-        asu1 = hkldata.as_asu_data("F_map1")
-        asu2 = hkldata.as_asu_data("F_map2")
-        size = asu1.get_size_for_hkl(sample_rate=3)
-        logger.writeln("using grid {}".format(size))
-        gr1 = asu1.get_f_phi_on_grid(size)
-        gr2 = asu2.get_f_phi_on_grid(size)
-        kernel = ext.hard_sphere_kernel_recgrid(size, asu1.unit_cell, args.local_fourier_weighting_with)
-        cc = maps.local_cc(gr1, gr2, kernel.array.real, method="simple")
-        cc.array[cc.array < 0] = 0 # negative cc cannot be used anyway
-        cc.array[:] = 2 * cc.array.real / (1 + cc.array.real) # to full map cc
-        hkldata.df["cc"] = numpy.real(cc.get_value_by_hkl(hkldata.miller_array()))
-        grf = type(gr1)((gr1.array + gr2.array) / 2, gr1.unit_cell, gr1.spacegroup)
-        var_f = maps.local_var(grf, kernel.array.real, method="simple")
-        hkldata.df["var_f"] = numpy.real(var_f.get_value_by_hkl(hkldata.miller_array()))
-        if args.B is not None:
-            k2_l = numpy.exp(-args.B / hkldata.d_spacings()**2 / 2)
-            hkldata.df.cc = k2_l * hkldata.df.cc / (1 + (k2_l - 1) * hkldata.df.cc)
-        hkldata.df["FWT"] = hkldata.df.FP * numpy.sqrt(hkldata.df.cc / hkldata.df.var_f)
-        hkldata.df["kernel"] = numpy.real(kernel.get_value_by_hkl(hkldata.miller_array()))
-        hkldata.write_mtz(args.output_prefix+"_cc.mtz", ["cc", "kernel"])
-        hkldata = hkldata.copy(d_min=args.resolution)
-        map_labs = ["FWT"]
-    else:
-        hkldata.setup_relion_binning("ml")
-        maps.calc_noise_var_from_halfmaps(hkldata)
-        map_labs = fofc.calc_maps(hkldata, B=args.B, has_halfmaps=True, half1_only=args.half1_only,
-                                  no_fsc_weights=args.no_fsc_weights, sharpening_b=args.sharpening_b)
-    fofc.write_files(hkldata, map_labs, grid_start=halfmaps[0][1],
-                     mask=mask, output_prefix=args.output_prefix,
-                     trim_map=args.trim, trim_mtz=args.trim_mtz)
-# nemap()
-
 def blur(args):
     set_prefix(args)
     if fileio.is_mmhkl_file(args.hklin):
@@ -1334,65 +960,17 @@ def blur(args):
         raise SystemExit("ERROR: Unsupported file type: {}".format(args.hklin))
 # blur()
 
-def mask_from_model(args):
-    st = fileio.read_structure(args.model) # TODO option to (or not to) expand NCS
-    if args.selection:
-        gemmi.Selection(args.selection).remove_not_selected(st)
-    gr, grid_start, grid_shape = fileio.read_ccp4_map(args.map, header_only=True)
-    mask = maps.mask_from_model(st, args.radius, soft_edge=args.soft_edge, grid=gr)
-    maps.write_ccp4_map(args.output, mask, grid_start=grid_start, grid_shape=grid_shape)
-# mask_from_model()
+def tls_select_main(args):
+    from servalcat.refine import tls_select
+    return tls_select.main(args)
 
-def applymask(args):
-    set_prefix(args)
-    grid, grid_start, grid_shape = fileio.read_ccp4_map(args.map)
-    mask = fileio.read_ccp4_map(args.mask)[0]
-    logger.writeln("Applying mask")
-    logger.writeln(" mask min: {:.3f} max: {:.3f}".format(numpy.min(mask), numpy.max(mask)))
-    grid.array[:] *= mask.array
+def tls_nma_main(args):
+    from servalcat.refine import tls_nma
+    tls_nma.main(args)
 
-    if args.normalize:
-        masked = grid.array[mask.array>args.mask_cutoff]
-        masked_mean = numpy.average(masked)
-        masked_std = numpy.std(masked)
-        logger.writeln("Normalizing map values within mask")
-        logger.writeln(" masked volume: {} mean: {:.3e} sd: {:.3e}".format(len(masked), masked_mean, masked_std))
-        grid.array[:] = (grid.array - masked_mean) / masked_std
-
-    maps.write_ccp4_map(args.output_prefix+".mrc", grid,
-                        grid_start=grid_start, grid_shape=grid_shape,
-                        mask_for_extent=mask.array if args.trim else None,
-                        mask_threshold=args.mask_cutoff)
-# applymask()
-
-def map2mtz(args):
-    if args.output is None:
-        args.output = fileio.splitext(os.path.basename(args.map))[0] + "_fft.mtz"
-    grid, grid_start, grid_shape = fileio.read_ccp4_map(args.map)
-    if args.resolution is None:
-        args.resolution = maps.nyquist_resolution(grid)
-        logger.writeln("WARNING: --resolution is not specified. Using Nyquist resolution: {:.2f}".format(args.resolution))
-
-    if grid_start != (0,0,0) or grid.shape != tuple(grid_shape):
-        # If only subregion of whole grid in map, unit cell needs to be re-defined.
-        if grid.shape != tuple(grid_shape):
-            new_abc = [grid.unit_cell.parameters[i] * grid_shape[i] / grid.shape[i] for i in range(3)]
-            cell = gemmi.UnitCell(*new_abc, *grid.unit_cell.parameters[3:])
-            logger.writeln("Changing unit cell to {}".format(cell.parameters))
-        else:
-            cell = grid.unit_cell
-        grid = gemmi.FloatGrid(grid.get_subarray(grid_start, grid_shape),
-                               cell, grid.spacegroup)
-    
-    f_grid = gemmi.transform_map_to_f_phi(grid)
-    asudata = f_grid.prepare_asu_data(dmin=args.resolution, with_000=True)
-    hkldata = hkl.hkldata_from_asu_data(asudata, "F")
-    if grid_start != (0,0,0):
-        shifts = grid.get_position(*grid_start)
-        hkldata.translate("F", shifts)
-        logger.writeln("Applying phase shift with translation {}".format(shifts.tolist()))
-    hkldata.write_mtz(args.output, ["F"])
-# map2mtz()
+def occ_groups_main(args):
+    from servalcat.refine import occ_groups
+    occ_groups.main(args)
 
 def sm2mm(args):
     set_prefix(args)
@@ -1685,13 +1263,7 @@ def json2csv(args):
 def set_prefix(args):
     if not hasattr(args, "output_prefix") or args.output_prefix:
         return
-    if args.subcommand == "symmodel":
-        args.output_prefix = fileio.splitext(os.path.basename(args.model))[0] + "_asu"
-    elif args.subcommand == "helical_biomt":
-        args.output_prefix = fileio.splitext(os.path.basename(args.model))[0] + "_biomt"
-    elif args.subcommand == "expand":
-        args.output_prefix = fileio.splitext(os.path.basename(args.model))[0]
-    elif args.subcommand == "h_add":
+    if args.subcommand == "h_add":
         args.output_prefix = fileio.splitext(os.path.basename(args.model))[0] + "_h"
     elif args.subcommand == "add_op3":
         args.output_prefix = fileio.splitext(os.path.basename(args.model))[0] + "_op3"
@@ -1707,8 +1279,14 @@ def set_prefix(args):
         args.output_prefix = f"{fileio.splitext(os.path.basename(args.model))[0]}_fcalc_{args.source}"
     elif args.subcommand == "blur":
         args.output_prefix = fileio.splitext(os.path.basename(args.hklin))[0]
-    elif args.subcommand == "applymask":
-        args.output_prefix = fileio.splitext(os.path.basename(args.map))[0] + "_masked"
+    elif args.subcommand in ("tls_select", "tls_bfit"):
+        from servalcat.refine import tls_select
+        tls_select.set_prefix(args)
+    elif args.subcommand == "tls_nma":
+        from servalcat.refine import tls_nma
+        tls_nma.set_prefix(args)
+    elif args.subcommand == "occ_groups":
+        args.output_prefix = fileio.splitext(os.path.basename(args.model))[0] + "_occ"
     elif args.subcommand == "sm2mm":
         args.output_prefix = os.path.basename(fileio.splitext(args.files[0])[0])
     elif args.subcommand == "json2csv":
@@ -1718,9 +1296,6 @@ def set_prefix(args):
 def main(args):
     comms = dict(show=show,
                  json2csv=json2csv,
-                 symmodel=symmodel,
-                 helical_biomt=helical_biomt,
-                 expand=symexpand,
                  h_add=h_add,
                  add_op3=add_op3,
                  map_peaks=map_peaks,
@@ -1731,13 +1306,12 @@ def main(args):
                  geom=geometry,
                  conf=compare_conf,
                  adp=adp_stats,
-                 power=show_power,
                  fcalc=fcalc,
-                 nemap=nemap,
                  blur=blur,
-                 mask_from_model=mask_from_model,
-                 applymask=applymask,
-                 map2mtz=map2mtz,
+                 tls_select=tls_select_main,
+                 tls_bfit=tls_select_main,
+                 tls_nma=tls_nma_main,
+                 occ_groups=occ_groups_main,
                  sm2mm=sm2mm,
                  mm2ins=mm2ins,
                  seq=seq,
