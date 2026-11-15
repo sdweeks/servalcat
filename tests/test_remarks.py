@@ -169,6 +169,28 @@ class TestRefinedModelHeader(unittest.TestCase):
         self.assertGreaterEqual(float(dpif), float(dpi))
         self.assertIsNotNone(block.find_value("_refine.correlation_coeff_Fo_to_Fc"))
 
+    def test_weight_remark_is_the_weight_of_the_data(self):
+        self.run_xtal("wd", "--weight", "3", "--no_weight_adjust")
+        lines = remark3("wd.pdb")
+        self.assertIn("RELATIVE TO THE GEOMETRY RESTRAINTS: 3.000", "\n".join(lines))
+
+    def test_linear_weight_adjustment(self):
+        # with a very small weight of the data the bond rmsZ is outside the target range at the start; from the third
+        # cycle on, the linear mode changes the weight by a factor between 0.5 and 2 towards the nearest limit
+        sys.argv = ["", "refine_xtal", "--model", "start.pdb", "--hklin", "data.mtz", "-s", "xray",
+                    "--labin", "FP,SIGFP,FreeR_flag", "--hydrogen", "no", "--ncycle", "5", "--weight", "0.0001",
+                    "--weight_adjust_mode", "linear", "-o", "lw"]
+        main()
+        log = open("lw.log").read()
+        facs = [float(x) for x in re.findall(r"Weight adjusted \(linear\).*weight x([0-9.]+)", log)]
+        self.assertTrue(facs, log[-2000:])
+        self.assertTrue(all(0.5 - 1e-9 <= f <= 2. + 1e-9 and f != 1. for f in facs), facs)
+        self.assertIn(2.0, facs)               # far below the range: the largest step
+        sys.argv = ["", "refine_xtal", "--model", "start.pdb", "--hklin", "data.mtz", "-s", "xray",
+                    "--weight_adjust_mode", "bogus", "-o", "bad"]
+        with self.assertRaises(SystemExit):
+            main()
+
     def test_header_does_not_depend_on_seq(self):
         # the same REMARK 3 with and without a sequence file
         self.run_xtal("sa")

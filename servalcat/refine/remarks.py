@@ -219,7 +219,7 @@ def remark3(st, stats, ll, ri, geom_rows, counts, mean_b):
     if stats.get("Ncyc") is not None:
         other.append(f"NUMBER OF REFINEMENT CYCLES: {stats['Ncyc']}")
     if stats.get("weight") is not None:
-        other.append(f"WEIGHT OF THE GEOMETRY RESTRAINTS (MATRIX WEIGHT): {stats['weight']:.3f}")
+        other.append(f"WEIGHT OF THE DATA TERM RELATIVE TO THE GEOMETRY RESTRAINTS: {stats['weight']:.3f}")
     if other:
         lines += ["REMARK   3", "REMARK   3  OTHER REFINEMENT REMARKS:"] + [f"REMARK   3   {o}" for o in other]
     return squeeze(lines)
