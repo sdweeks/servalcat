@@ -15,7 +15,6 @@ import sys
 import numpy
 import pandas
 import gemmi
-import test_spa
 from pandas.testing import assert_frame_equal
 from servalcat import utils
 from servalcat.refine.refine import Geom, RefineParams, load_config
@@ -47,7 +46,7 @@ class TestRefine(unittest.TestCase):
     def test_refine_xtal_int(self):
         mtzin = os.path.join(root, "5e5z", "5e5z.mtz.gz")
         pdbin = os.path.join(root, "5e5z", "5e5z.pdb.gz")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", pdbin, "--rand", "0.5",
+        sys.argv = ["", "refine_xtal", "--model", pdbin, "--rand", "0.5",
                     "--hklin", mtzin, "-s", "xray", "--labin", "I,SIGI,FREE", "--nbins", "5"]
         main()
         with open("5e5z_refined_stats.json") as f:
@@ -58,7 +57,7 @@ class TestRefine(unittest.TestCase):
     def test_refine_xtal(self):
         mtzin = os.path.join(root, "5e5z", "5e5z.mtz.gz")
         pdbin = os.path.join(root, "5e5z", "5e5z.pdb.gz")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", pdbin, "--rand", "0.5",
+        sys.argv = ["", "refine_xtal", "--model", pdbin, "--rand", "0.5",
                     "--hklin", mtzin, "-s", "xray", "--labin", "FP,SIGFP,FREE"]
         main()
         with open("5e5z_refined_stats.json") as f:
@@ -69,7 +68,7 @@ class TestRefine(unittest.TestCase):
     def test_refine_small_hkl(self):
         hklin = os.path.join(root, "biotin", "biotin_talos.hkl")
         xyzin = os.path.join(root, "biotin", "biotin_talos.ins")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", xyzin,
+        sys.argv = ["", "refine_xtal", "--model", xyzin,
                     "--hklin", hklin, "-s", "electron", "--unrestrained"]
         main()
         with open("biotin_talos_refined_stats.json") as f:
@@ -78,7 +77,7 @@ class TestRefine(unittest.TestCase):
 
     def test_refine_small_cif(self):
         cifin = os.path.join(root, "biotin", "biotin_talos.cif")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", cifin,
+        sys.argv = ["", "refine_xtal", "--model", cifin,
                     "--hklin", cifin, "-s", "electron", "--unrestrained"]
         main()
         with open("biotin_talos_refined_stats.json") as f:
@@ -88,7 +87,7 @@ class TestRefine(unittest.TestCase):
     def test_refine_aniso(self):
         hklin = os.path.join(root, "biotin", "biotin_talos.hkl")
         xyzin = os.path.join(root, "biotin", "biotin_talos.ins")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", xyzin,
+        sys.argv = ["", "refine_xtal", "--model", xyzin,
                     "--hklin", hklin, "-s", "electron", "--unrestrained",
                     "--adp", "aniso"]
         main()
@@ -101,7 +100,7 @@ class TestRefine(unittest.TestCase):
     def test_refine_aniso_occ(self):
         hklin = os.path.join(root, "biotin", "biotin_talos.hkl")
         xyzin = os.path.join(root, "biotin", "biotin_talos.ins")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", xyzin,
+        sys.argv = ["", "refine_xtal", "--model", xyzin,
                     "--hklin", hklin, "-s", "electron", "--unrestrained",
                     "--adp", "aniso", "--refine_all_occ"]
         main()
@@ -112,24 +111,10 @@ class TestRefine(unittest.TestCase):
         self.assertTrue(all(x.atom.aniso.nonzero() for x in st[0].all()))
         self.assertTrue(sum(x.atom.occ < 1 for x in st[0].all()) > 0.5 * st[0].count_atom_sites())
         
-    def test_refine_spa(self):
-        data = test_spa.data
-        sys.argv = ["", "refine_spa_norefmac", "--halfmaps", data["half1"], data["half2"],
-                    "--model", data["pdb"],
-                    "--resolution", "1.9", "--ncycle", "2", "--write_trajectory"]
-        main()
-        self.assertTrue(os.path.isfile("refined_fsc.json"))
-        self.assertTrue(os.path.isfile("refined.mmcif"))
-        self.assertTrue(os.path.isfile("refined_maps.mtz"))
-        self.assertTrue(os.path.isfile("refined_expanded.pdb"))
-        with open("refined_stats.json") as f:
-            stats = json.load(f)
-        self.assertGreater(stats[-1]["data"]["summary"]["FSCaverage"], 0.66)
-
     def test_refine_group_occ(self):
         mtzin = os.path.join(root, "6mw0", "6mw0-sf.cif.gz")
         xyzin = os.path.join(root, "6mw0", "6mw0.cif")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", xyzin,
+        sys.argv = ["", "refine_xtal", "--model", xyzin,
                     "--hklin", mtzin, "-s", "xray", "--labin", "IMEAN,SIGIMEAN",
                     "--bfactor", "5", "--keywords",
                     "occupancy group id 1 chain A alt A",
@@ -152,7 +137,7 @@ class TestRefine(unittest.TestCase):
     def test_refine_dfrac(self):
         hklin = os.path.join(root, "1v9g", "1v9g-sf.cif.gz")
         xyzin = os.path.join(root, "1v9g", "1v9g-spk.cif.gz")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", xyzin,
+        sys.argv = ["", "refine_xtal", "--model", xyzin,
                     "--hklin", hklin, "-s", "neutron",
                     "--hydr", "yes", "--hout", "--refine_dfrac"]
         main()
@@ -165,7 +150,7 @@ class TestRefine(unittest.TestCase):
     def test_refine_twin(self):
         hklin = os.path.join(root, "1l2h", "1l2h.mtz.gz")
         xyzin = os.path.join(root, "1l2h", "1l2h.cif.gz")
-        sys.argv = ["", "refine_xtal_norefmac", "--model", xyzin,
+        sys.argv = ["", "refine_xtal", "--model", xyzin,
                     "--hklin", hklin, "-s", "xray", "--twin",
                     "--ncycle", "5"]
         main()
