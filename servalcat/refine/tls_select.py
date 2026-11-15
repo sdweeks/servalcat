@@ -44,7 +44,7 @@ u_to_b = utils.model.u_to_b
 
 # options of refine_xtal that tls_select sets itself or does not use: not shown in its help
 _HIDDEN = ("ncycle", "fix_xyz", "tls", "tls_per_chain", "tls_file", "tls_ncycle", "write_trajectory",
-           "no_weight_adjust", "target_bond_rmsz_range", "adp", "randomize", "refine_occ", "occ_waters",
+           "no_weight_adjust", "target_bond_rmsz_range", "weight_adjust_mode", "adp", "randomize", "refine_occ", "occ_waters",
            "occ_adpr_weight")
 
 def add_arguments(parser, method="likelihood"):

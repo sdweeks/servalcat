@@ -28,7 +28,7 @@ Frequently used options
 
    * ``--ligand [LIGAND ...]``: Restraint dictionary CIF file(s)
    * ``--ncycle NCYCLE``: Number of refinement cycles. Default: 10
-   * ``--weight WEIGHT``: Starting value of the weight for the experimental data term (default: automatically determined from resolution). By default, the weight is further adjusted to achieve bond length rmsZ in the range between 0.5 and 1.0. This can be changed using the option ``--target_bond_rmsz_range MIN_RMSZ MAX_RMSZ``.
+   * ``--weight WEIGHT``: Starting value of the weight for the experimental data term (default: automatically determined from resolution). By default, the weight is further adjusted to achieve bond length rmsZ in the range between 0.5 and 1.0. This can be changed using the option ``--target_bond_rmsz_range MIN_RMSZ MAX_RMSZ``. With ``--weight_adjust_mode linear`` the weight is rescaled in every cycle in which the bond rmsZ is outside this range (by MAX_RMSZ/rmsZ or MIN_RMSZ/rmsZ, at most a factor of 0.5 or 2 per cycle), which reaches a narrow target range (e.g. 0.25 0.45 at medium resolution) within a few cycles; the default mode only makes small steps when the rmsZ is moving away from the range.
    * ``--ncsr``: Use local restraints for non-crystallographic symmetry
    * ``--tls``, ``--tls_per_chain``, ``--tls_file FILE``, ``--tls_ncycle N``: TLS refinement (see below)
    * ``--jellybody``: Use jelly body restraints
@@ -298,11 +298,17 @@ The options are listed in groups: required arguments; optional arguments with de
       --ncycle N                      Number of refinement cycles (default: 10)
       --adp {fix,iso,aniso}           ADP model; with --tls the residual B stays isotropic (default:
                                       iso)
-      --weight W                      Weight of the geometry restraints relative to the data (default:
-                                      auto)
+      --weight W                      Weight of the data term relative to the geometry restraints
+                                      (higher: looser geometry) (default: auto)
       --target_bond_rmsz_range MIN MAX
                                       Bond rmsZ range that the automatic weight adjustment aims for
                                       (default: [0.5, 1.0])
+      --weight_adjust_mode {default,linear}
+                                      How the weight is adjusted towards --target_bond_rmsz_range.
+                                      default: /1.1 when the bond rmsZ is above MAX and rising, x1.3
+                                      when below MIN and falling; linear: every cycle that the bond
+                                      rmsZ is outside the range, multiply the weight by MAX/rmsZ or
+                                      MIN/rmsZ (at most x0.5 or x2 per cycle) (default: default)
       --hydrogen {all,yes,no}         all: add riding hydrogen atoms; yes: use hydrogen atoms if
                                       present in the model; no: remove hydrogen atoms (default: all)
       --adpr_weight W                 Weight of the ADP restraints (default: 1.0)

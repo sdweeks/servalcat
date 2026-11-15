@@ -965,7 +965,10 @@ class Refine:
         return ret, shift_scale, f1
 
     def run_cycles(self, ncycles, weight=1, weight_adjust=False, debug=False,
-                   weight_adjust_bond_rmsz_range=(0.5, 1.), stats_json_out=None):
+                   weight_adjust_bond_rmsz_range=(0.5, 1.), stats_json_out=None,
+                   weight_adjust_mode="default"):
+        if weight_adjust_mode not in ("default", "linear"):
+            raise ValueError(f"unknown weight_adjust_mode: {weight_adjust_mode}")
         self.print_weights()
         stats = [{"Ncyc": 0}]
         self.params.ensure_occ_constraints()
@@ -1055,7 +1058,20 @@ class Refine:
                 len(stats) > 2 and "Bond distances, non H" in stats[-1]["geom"]["summary"].index):
                 rmsz = stats[-1]["geom"]["summary"]["r.m.s.Z"]["Bond distances, non H"]
                 rmsz0 = stats[-2]["geom"]["summary"]["r.m.s.Z"]["Bond distances, non H"]
-                if rmsz > weight_adjust_bond_rmsz_range[1] and rmsz > rmsz0:
+                if weight_adjust_mode == "linear":
+                    # every cycle that the bond rmsZ is outside the target range, scale the weight by the ratio of
+                    # the nearest range limit to the bond rmsZ (at most x0.5 or x2 per cycle)
+                    rmsz_min, rmsz_max = weight_adjust_bond_rmsz_range
+                    fac = 1.
+                    if rmsz > rmsz_max:
+                        fac = max(0.5, rmsz_max / rmsz)
+                    elif rmsz < rmsz_min:
+                        fac = min(2., rmsz_min / rmsz)
+                    if fac != 1.:
+                        weight *= fac
+                        logger.writeln(f"Weight adjusted (linear): bond rmsZ= {rmsz:.3f} outside [{rmsz_min}, {rmsz_max}];"
+                                       f" weight x{fac:.3f} -> {weight:.4f}")
+                elif rmsz > weight_adjust_bond_rmsz_range[1] and rmsz > rmsz0:
                     weight /= 1.1
                 elif rmsz < weight_adjust_bond_rmsz_range[0] and rmsz0 < weight_adjust_bond_rmsz_range[0] and rmsz < rmsz0:
                     weight *= 1.3

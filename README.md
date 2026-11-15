@@ -72,6 +72,12 @@ electron diffraction — and extends it with TLS.
   and zAngle during the cycles as sparklines (and `PREFIX_summary.png` if matplotlib is installed), the sequence
   alignment if `--seq` was used, the refined occupancies and the output files; the full log still scrolls past as
   before ([details](#summary-at-the-end-of-a-run)).
+* **Linear weight adjustment towards a bond rmsZ target** — `--weight_adjust_mode linear` rescales the weight of the
+  experimental data in every cycle in which the bond-length rmsZ is outside `--target_bond_rmsz_range`, by the ratio
+  of the nearest range limit to the rmsZ (at most ×0.5 or ×2 per cycle). A narrow target such as `0.25 0.45` at
+  medium resolution is reached within a few cycles and the weight then stays constant; the default adjustment only
+  makes steps of /1.1 or ×1.3 when the rmsZ is moving away from the range, so from a refined model it rarely
+  reaches such a target ([details](#weight-of-the-experimental-data-and-bond-rmsz-target)).
 * **TLS groups from normal modes** — `servalcat util tls_nma` finds domains that move together with an anisotropic or a
   Gaussian elastic network model and writes them as TLS groups, also when a domain is internal or made of several
   stretches or chains ([below](#tls-groups-from-normal-modes-servalcat-util-tls_nma)).
@@ -132,7 +138,33 @@ Output files:
 On the small test peptide of this repository (`tests/5e5z`), this command gives Rwork 0.19 / Rfree 0.22 and
 a bond-length r.m.s.d. of 0.017 Å after 10 cycles. The weight of the experimental data against the
 restraints is chosen from the resolution and adjusted during refinement to keep the bond-length rmsZ between
-0.5 and 1.0 (`--weight`, `--no_weight_adjust`, `--target_bond_rmsz_range`).
+0.5 and 1.0 (`--weight`, `--no_weight_adjust`, `--target_bond_rmsz_range`, `--weight_adjust_mode`; see
+[below](#weight-of-the-experimental-data-and-bond-rmsz-target)).
+
+### Weight of the experimental data and bond rmsZ target
+
+The function minimised is *w* × (−log-likelihood of the data) + (geometry restraints), so `--weight` *w* weights
+the **data**: a higher value gives looser geometry, a lower value tighter geometry. Without `--weight`, the
+starting value is exp(0.9104 × d<sub>min</sub> + 0.2162) (about 6 at 1.8 Å, 8 at 2.05 Å, 11 at 2.4 Å). Unless
+`--no_weight_adjust` is given, the weight is then adjusted after each cycle (from the third cycle on) to bring
+the bond-length rmsZ into `--target_bond_rmsz_range` (0.5 1.0):
+
+| `--weight_adjust_mode` | Adjustment |
+|---|---|
+| `default` | weight /1.1 when the bond rmsZ is above MAX **and** rising, ×1.3 when below MIN and falling (and /1.1 if it rose by more than half) |
+| `linear` | in every cycle in which the bond rmsZ is outside the range, weight × MAX/rmsZ (or × MIN/rmsZ), at most ×0.5 or ×2 per cycle; each change is written to the log |
+
+The default mode makes small steps only when the rmsZ moves away from the range, so starting from an already
+refined model (rmsZ slowly falling) it may hardly change the weight. To refine to a tighter target, e.g. at
+around 2 Å resolution:
+
+```shell
+servalcat refine_xtal ... --target_bond_rmsz_range 0.25 0.45 --weight_adjust_mode linear --ncycle 20
+```
+
+The rmsZ follows a change of the weight with a delay of a few cycles, so it keeps decreasing for a while after
+the weight has settled; allow 15–20 cycles. Bond-angle, planarity and chirality rmsZ follow the bond rmsZ but
+change less (angle rmsZ typically 0.7 when bond rmsZ is 0.35–0.4).
 
 Ligands that are not in the monomer library need a restraint dictionary (e.g. from AceDRG):
 `--ligand ligand.cif`. Without any restraints (small molecules): `--unrestrained --hydrogen no`.
@@ -198,8 +230,9 @@ its help line. The tables below are grouped by topic instead. Defaults are in pa
 | Option | Meaning |
 |---|---|
 | `--ncycle N` | number of cycles (10) |
-| `--weight W` | starting weight of the experimental data against the restraints (automatic, from the resolution) |
+| `--weight W` | starting weight of the experimental data against the restraints; higher = looser geometry (automatic, from the resolution) |
 | `--no_weight_adjust`, `--target_bond_rmsz_range MIN MAX` | do not adjust the weight during refinement / the bond rmsZ range that the adjustment aims at (0.5 1.0) |
+| `--weight_adjust_mode {default,linear}` | how the weight is adjusted towards the bond rmsZ range: small steps when the rmsZ moves away from it (`default`), or rescaling by the ratio of range limit to rmsZ in every cycle in which it is outside the range (`linear`) ([details](#weight-of-the-experimental-data-and-bond-rmsz-target)) |
 | `--randomize RMSD` | shake the coordinates by this r.m.s.d. (Å) before refinement |
 | `--bfactor B` | reset all B-factors to this value first |
 | `--fix_xyz` | keep coordinates fixed |

@@ -71,9 +71,13 @@ def add_arguments(parser, after_required=None, hklin_required=True):
     _add(g, "--adp", choices=["fix", "iso", "aniso"], default="iso",
          help="ADP model; with --tls the residual B stays isotropic")
     _add(g, "--weight", type=float, metavar="W", show="auto",
-         help="Weight of the geometry restraints relative to the data")
+         help="Weight of the data term relative to the geometry restraints (higher: looser geometry)")
     _add(g, "--target_bond_rmsz_range", nargs=2, type=float, default=[0.5, 1.], metavar=("MIN", "MAX"),
          help="Bond rmsZ range that the automatic weight adjustment aims for")
+    _add(g, "--weight_adjust_mode", choices=["default", "linear"], default="default",
+         help="How the weight is adjusted towards --target_bond_rmsz_range. default: /1.1 when the bond rmsZ is "
+         "above MAX and rising, x1.3 when below MIN and falling; linear: every cycle that the bond rmsZ is outside "
+         "the range, multiply the weight by MAX/rmsZ or MIN/rmsZ (at most x0.5 or x2 per cycle)")
     _add(g, "--hydrogen", default="all", choices=["all", "yes", "no"],
          help="all: add riding hydrogen atoms; yes: use hydrogen atoms if present in the model; "
          "no: remove hydrogen atoms")
@@ -450,6 +454,7 @@ def main(args):
     stats = refiner.run_cycles(args.ncycle, weight=args.weight,
                                weight_adjust=not args.no_weight_adjust,
                                weight_adjust_bond_rmsz_range=args.target_bond_rmsz_range,
+                               weight_adjust_mode=args.weight_adjust_mode,
                                stats_json_out=args.output_prefix + "_stats.json")
     if tls is not None:
         tls.finalize() # B values in the output are those of the total U
